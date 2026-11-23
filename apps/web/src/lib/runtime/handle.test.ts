@@ -11,6 +11,9 @@ import { resetDatabase, seedAccount, seedLiveAutomation, seedUser, TEST_KEY } fr
 
 import { findEmail, handleEvent } from "./handle";
 
+// The window_closed retries wait seconds between tries; tests don't.
+vi.mock("./sleep", () => ({ sleep: vi.fn(async () => {}) }));
+
 let eventCount = 0;
 
 function commentEvent(overrides: Partial<CommentCreatedEvent["data"]> = {}): CommentCreatedEvent {
@@ -186,15 +189,42 @@ describe("message.postback", () => {
     expect((await onlyRun()).state).toBe("final_sent");
   });
 
-  it("records window_closed on the run and doesn't retry", async () => {
+  it("retries a Final DM Instagram refuses as outside the window, and sends it when a retry goes through", async () => {
     const run = await openRun();
-    const adeli = fakeAdeli([(sent) => sent.path === "/messages/instagram" ? apiError(409, "window_closed") : undefined]);
+    let refusals = 1;
+    const adeli = fakeAdeli([(sent) => sent.path === "/messages/instagram" && refusals-- > 0 ? apiError(409, "window_closed") : undefined]);
     await handleEvent(USER, postbackEvent(run.id));
+    expect(adeli.messages()).toHaveLength(2);
+    expect((await onlyRun()).state).toBe("final_sent");
+  });
+
+  it("holds a Final DM Instagram keeps refusing, and sends it on the person's next message", async () => {
+    const run = await openRun();
+    const refused = fakeAdeli([(sent) => sent.path === "/messages/instagram" ? apiError(409, "window_closed") : undefined]);
+    await handleEvent(USER, postbackEvent(run.id));
+    await handleEvent(USER, postbackEvent(run.id));
+    expect(refused.messages()).toHaveLength(3);
+    const held = await onlyRun();
+    expect(held.state).toBe("awaiting_message");
+    expect(held.error).toContain("next message");
+
+    const adeli = fakeAdeli();
+    const reply = messageEvent("hello?");
+    await handleEvent(USER, reply);
+    await handleEvent(USER, reply);
+    expect(adeli.messages()).toHaveLength(1);
+    expect(adeli.messages()[0].body).toMatchObject({ recipient: { id: "ig_fan" }, text: "Here it is!" });
+    const sent = await onlyRun();
+    expect(sent.state).toBe("final_sent");
+    expect(sent.error).toBeNull();
+  });
+
+  it("doesn't retry other refusals", async () => {
+    const run = await openRun();
+    const adeli = fakeAdeli([(sent) => sent.path === "/messages/instagram" ? apiError(422, "provider_rejected") : undefined]);
     await handleEvent(USER, postbackEvent(run.id));
     expect(adeli.messages()).toHaveLength(1);
-    const failed = await onlyRun();
-    expect(failed.state).toBe("failed");
-    expect(failed.error).toContain("window_closed");
+    expect((await onlyRun()).state).toBe("failed");
   });
 
   it("ignores payloads that aren't one of our runs", async () => {
@@ -244,7 +274,7 @@ describe("Final DM links and branding", () => {
     fakeAdeli();
     await handleEvent(USER, commentEvent());
     const run = await onlyRun();
-    const adeli = fakeAdeli([(sent) => sent.path === "/messages/instagram" ? apiError(409, "window_closed") : undefined]);
+    const adeli = fakeAdeli([(sent) => sent.path === "/messages/instagram" ? apiError(502, "provider_error") : undefined]);
     await handleEvent(USER, postbackEvent(run.id));
     expect(adeli.messages()).toHaveLength(1);
     expect((await onlyRun()).state).toBe("failed");

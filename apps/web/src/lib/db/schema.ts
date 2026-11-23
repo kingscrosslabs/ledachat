@@ -368,7 +368,7 @@ export const runs = pgTable("runs", {
    * With email capture on, a tap moves it to `awaiting_email` instead, and their reply claims it the same way.
    * With the follow gate on, a tap from someone who doesn't follow moves it to `awaiting_follow`, and their next tap claims it.
    */
-  state: text("state", { enum: ["matched", "opening_sent", "tapped", "awaiting_follow", "awaiting_email", "final_sending", "final_sent", "failed"] }).notNull().default("matched"),
+  state: text("state", { enum: ["matched", "opening_sent", "tapped", "awaiting_follow", "awaiting_email", "awaiting_message", "final_sending", "final_sent", "failed"] }).notNull().default("matched"),
   commentReplyState: text("comment_reply_state", { enum: ["skipped", "sent", "failed"] }),
   error: text("error"),
   openingSentAt: timestamp("opening_sent_at", { withTimezone: true }),

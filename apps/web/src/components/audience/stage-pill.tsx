@@ -8,7 +8,7 @@ export function StagePill({ stage, className }: { stage: RunStage; className?: s
     ? "bg-success-wash text-success"
     : stage === "failed"
       ? "bg-destructive/10 text-destructive"
-      : stage === "awaiting_follow" || stage === "awaiting_email"
+      : stage === "awaiting_follow" || stage === "awaiting_email" || stage === "awaiting_message"
         ? "bg-warning-wash text-warning"
         : "bg-muted text-muted-foreground";
   return <Badge className={cn(tone, className)}>{STAGE_LABELS[stage]}</Badge>;
