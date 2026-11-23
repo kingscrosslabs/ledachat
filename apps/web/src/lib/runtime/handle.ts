@@ -14,13 +14,16 @@ import { db, schema } from "@/lib/db";
 import { BRANDING_TEXT, showsBranding } from "@/lib/plan";
 
 import { matchComment, matchStoryReply, nextPostAfter } from "./match";
+import { sleep } from "./sleep";
 
 /**
  * The Comment to DM runtime (PRD §5.8), for one user: the one whose webhook
  * secret signed the delivery. It only reads that user's accounts and
  * automations and only calls Adeli with that user's key. Each step records
- * its outcome on the run. Nothing is retried: a failed step records the
- * error and stops.
+ * its outcome on the run. A failed step records the error and stops, except
+ * a DM after a tap that Instagram refuses as outside its reply window: that
+ * one is retried, and a Final DM still refused waits for the person's next
+ * message (`awaiting_message`).
  */
 export async function handleEvent(userId: string, event: WebhookEvent) {
   if (event.type === "comment.created" && event.platform === "instagram") return handleComment(userId, event);
@@ -49,6 +52,29 @@ function trackStep(userId: string, event: string, automationId: string, properti
 
 function trackFailure(userId: string, automationId: string, step: string, error: unknown) {
   trackStep(userId, "automation_step_failed", automationId, { step, error_code: error instanceof AdeliError ? error.code : "unknown" });
+}
+
+function isWindowClosed(error: unknown) {
+  return error instanceof AdeliError && error.code === "window_closed";
+}
+
+/**
+ * Waits between tries of a DM Instagram refused as outside its reply window.
+ * A tap opens the window, but Instagram can refuse a DM sent seconds after
+ * it, so a send right after a tap gets two more tries before giving up.
+ */
+const WINDOW_RETRY_DELAYS_MS = [3_000, 10_000];
+
+async function sendAfterTap(send: () => Promise<unknown>) {
+  for (const delay of WINDOW_RETRY_DELAYS_MS) {
+    try {
+      return await send();
+    } catch (error) {
+      if (!isWindowClosed(error)) throw error;
+      await sleep(delay);
+    }
+  }
+  return send();
 }
 
 function pick<T>(items: T[]) {
@@ -186,14 +212,14 @@ async function handlePostback(userId: string, event: MessagePostbackEvent) {
   trackStep(userId, "dm_button_tapped", run.automationId, { email_capture_enabled: emailCapture.enabled, follow_gate_enabled: followGate.enabled });
   if (followGate.enabled && !(await followsAccount(run.id, row.account.adeliAccountId, event.data.senderId))) {
     try {
-      await adeliCall((client) => client.messages.sendInstagramMessage({
+      await sendAfterTap(() => adeliCall((client) => client.messages.sendInstagramMessage({
         body: {
           accountId: row.account.adeliAccountId,
           recipient: { id: event.data.senderId },
           text: recheck ? followGate.retryText : followGate.text,
           buttons: [{ type: "postback", title: followGate.buttonLabel, payload: run.id }],
         },
-      }));
+      })));
       await updateRun(run.id, { state: "awaiting_follow" });
       trackStep(userId, "follow_gate_sent", run.automationId, { recheck });
     } catch (error) {
@@ -205,7 +231,7 @@ async function handlePostback(userId: string, event: MessagePostbackEvent) {
 
   if (emailCapture.enabled) {
     try {
-      await sendText(userId, row.account.adeliAccountId, event.data.senderId, emailCapture.text);
+      await sendAfterTap(() => sendText(userId, row.account.adeliAccountId, event.data.senderId, emailCapture.text));
       await updateRun(run.id, { state: "awaiting_email" });
       trackStep(userId, "email_requested", run.automationId);
     } catch (error) {
@@ -214,7 +240,7 @@ async function handlePostback(userId: string, event: MessagePostbackEvent) {
     }
     return;
   }
-  await sendFinalDm(userId, run.id, run.automationId, row.account.adeliAccountId, event.data.senderId, row.automation.finalDm);
+  await sendFinalDm(userId, run.id, run.automationId, row.account.adeliAccountId, event.data.senderId, row.automation.finalDm, { afterTap: true });
 }
 
 /**
@@ -229,6 +255,7 @@ async function handleMessage(userId: string, event: MessageCreatedEvent) {
   if (!account) return;
   // A story reply that starts a Story Reply automation isn't also an email answer.
   if (event.data.story?.type === "reply" && await handleStoryReply(userId, event, account)) return;
+  if (await sendHeldFinalDm(userId, account, senderId)) return;
   // Their most recent tap still waiting on an email, on this user's account.
   const [waiting] = await db().select({ run: schema.runs, automation: schema.automations })
     .from(schema.runs)
@@ -338,19 +365,49 @@ async function sendText(userId: string, adeliAccountId: string, recipientId: str
   await adeliCall((client) => client.messages.sendInstagramMessage({ body: { accountId: adeliAccountId, recipient: { id: recipientId }, text } }));
 }
 
-async function sendFinalDm(userId: string, runId: string, automationId: string, adeliAccountId: string, recipientId: string, finalDm: Automation["finalDm"]) {
+/**
+ * A Final DM Instagram refused right after the tap waits for the person's
+ * next message, which always opens the reply window. Sends it now if this
+ * sender has one waiting on this account. Returns true when it did.
+ */
+async function sendHeldFinalDm(userId: string, account: AccountRow, senderId: string) {
+  const now = new Date();
+  const waitingRuns = db().select({ id: schema.runs.id }).from(schema.runs)
+    .innerJoin(schema.automations, eq(schema.automations.id, schema.runs.automationId))
+    .where(and(eq(schema.runs.igSenderId, senderId), eq(schema.runs.state, "awaiting_message"), eq(schema.automations.accountId, account.id)));
+  // The same claim as a tap: only one delivery of their message sends it.
+  const claimed = await db().update(schema.runs)
+    .set({ state: "final_sending", error: null, updatedAt: now })
+    .where(and(inArray(schema.runs.id, waitingRuns), eq(schema.runs.state, "awaiting_message")))
+    .returning({ id: schema.runs.id, automationId: schema.runs.automationId });
+  if (!claimed.length) return false;
+  for (const run of claimed) {
+    const [automation] = await db().select({ finalDm: schema.automations.finalDm }).from(schema.automations).where(eq(schema.automations.id, run.automationId)).limit(1);
+    if (!automation) continue;
+    await sendFinalDm(userId, run.id, run.automationId, account.adeliAccountId, senderId, automation.finalDm);
+  }
+  return true;
+}
+
+async function sendFinalDm(userId: string, runId: string, automationId: string, adeliAccountId: string, recipientId: string, finalDm: Automation["finalDm"], options: { afterTap?: boolean } = {}) {
+  const send = () => adeliCall((client) => client.messages.sendInstagramMessage({
+    body: {
+      accountId: adeliAccountId,
+      recipient: { id: recipientId },
+      text: finalDm.text,
+      buttons: finalDm.buttons.map((button) => ({ type: "url" as const, title: button.label, url: button.url })),
+    },
+  }));
   try {
-    await adeliCall((client) => client.messages.sendInstagramMessage({
-      body: {
-        accountId: adeliAccountId,
-        recipient: { id: recipientId },
-        text: finalDm.text,
-        buttons: finalDm.buttons.map((button) => ({ type: "url" as const, title: button.label, url: button.url })),
-      },
-    }));
+    await (options.afterTap ? sendAfterTap(send) : send());
     await updateRun(runId, { state: "final_sent" });
     trackStep(userId, "final_dm_sent", automationId, { buttons: finalDm.buttons.length });
   } catch (error) {
+    if (options.afterTap && isWindowClosed(error)) {
+      await updateRun(runId, { state: "awaiting_message", error: "Instagram didn't allow the Final DM yet. It goes out when they next message you." });
+      trackFailure(userId, automationId, "final_dm_held", error);
+      return;
+    }
     await updateRun(runId, { state: "failed", error: errorText(error) });
     trackFailure(userId, automationId, "final_dm", error);
     return;
