@@ -142,7 +142,7 @@ export function ConnectCard({ currentAccountId, agent = false, autoStart = null 
       return;
     }
     toast.success(`Connected @${result.handle}`);
-    router.push("/automations");
+    router.push("/connect/agent");
   }
 
   function cancel() {
@@ -163,7 +163,7 @@ export function ConnectCard({ currentAccountId, agent = false, autoStart = null 
         return;
       }
       toast.success(`Using @${result.handle}`);
-      router.push("/automations");
+      router.push("/connect/agent");
     });
   }
 

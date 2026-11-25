@@ -3,7 +3,8 @@ import "server-only";
 import { and, asc, count, eq, ne, sql } from "drizzle-orm";
 import { after } from "next/server";
 
-import { missingGrantsFor, missingGrantsMessage } from "@/lib/adeli/instagram";
+import { latestMedia, missingGrantsFor, missingGrantsMessage } from "@/lib/adeli/instagram";
+import { snapshotOf } from "./snapshot";
 import { alertWentLive } from "@/lib/alerts/dopamine";
 import { trackError, type Source } from "@/lib/analytics/server";
 import { appUrl } from "@/lib/app-url";
@@ -120,6 +121,28 @@ export async function createAutomation(userId: string, content: Partial<Automati
   const values = keepShape(parseContent({ ...defaultAutomationContent(total, type), ...content, type }));
   const [row] = await db().insert(schema.automations).values({ accountId: account.id, ...values }).returning({ id: schema.automations.id });
   return { id: row.id };
+}
+
+/** Onboarding creates only the first automation, so retries and back navigation are safe. */
+export async function createFirstAutomation(userId: string): Promise<{ id: string }> {
+  const account = await requireAccount(userId);
+  const existing = await db().select({ id: schema.automations.id }).from(schema.automations).where(eq(schema.automations.accountId, account.id)).limit(1);
+  if (existing[0]) return existing[0];
+  const media = await latestMedia(userId, account.accountId);
+  const defaults = defaultAutomationContent(0);
+  const content = parseContent({
+    ...defaults,
+    name: "My first automation",
+    trigger: { ...defaults.trigger, keywords: ["GUIDE"], mediaId: media?.id ?? null, mediaSnapshot: media ? snapshotOf(media) : null },
+    finalDm: { type: "text_buttons", text: "Here's your guide! Tap below to take a look.", buttons: [{ label: "Get the guide", url: "https://ledachat.com" }] },
+  });
+  return db().transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`onboarding:${account.id}`}))`);
+    const [existing] = await tx.select({ id: schema.automations.id }).from(schema.automations).where(eq(schema.automations.accountId, account.id)).limit(1);
+    if (existing) return existing;
+    const [created] = await tx.insert(schema.automations).values({ accountId: account.id, ...content, status: "draft" }).returning({ id: schema.automations.id });
+    return created;
+  });
 }
 
 /** Saves content. Saving a live automation applies at once, so it must pass Go Live checks (D4). */
