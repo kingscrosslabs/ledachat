@@ -7,6 +7,7 @@ import { cn } from "@adeli-chat/ui/lib/utils";
 
 const STEPS = [
   { id: "account", label: "Instagram account" },
+  { id: "agent", label: "Connect your AI Agent" },
   { id: "automation", label: "First automation" },
 ] as const;
 
@@ -47,7 +48,7 @@ export function OnboardingLayout({ step, user, children }: { step: OnboardingSte
     <main className="min-h-screen bg-muted px-4 py-8 sm:py-14">
       <PostHogIdentify user={{ id: user.id, email: user.email, name: user.name }} />
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-8">
-        <div className="flex flex-col items-start gap-5 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col items-start gap-5 ">
           <Wordmark />
           <OnboardingChecklist current={step} />
         </div>

@@ -179,6 +179,13 @@ export async function getConnectSession(userId: string, sessionId: string): Prom
   return toConnectSession(result.data);
 }
 
+/** Select by publication date, rather than relying on the provider's ordering. */
+export async function latestMedia(userId: string, accountId: string): Promise<AdeliMedia | null> {
+  const posts = await listPosts(userId, accountId);
+  const latest = posts.sort((a, b) => (Date.parse(b.publishedAt ?? "") || 0) - (Date.parse(a.publishedAt ?? "") || 0))[0];
+  return latest ? toMedia(latest) : null;
+}
+
 export async function listMedia(userId: string, accountId: string, page: number): Promise<{ media: AdeliMedia[]; hasMore: boolean }> {
   const posts = await listPosts(userId, accountId);
   const start = page * PAGE_SIZE;

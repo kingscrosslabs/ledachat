@@ -200,6 +200,10 @@ export async function disconnectAccount(): Promise<ActionResult> {
   });
 }
 
+export async function createFirstAutomation(): Promise<ActionResult<{ id: string }>> {
+  return guard(async (userId) => done(await service.createFirstAutomation(userId)));
+}
+
 export async function createAutomation(type: unknown = "comment_to_dm"): Promise<ActionResult<{ id: string }>> {
   return guard(async (userId) => {
     const parsed = automationTypeSchema.safeParse(type);

@@ -10,7 +10,6 @@ import { toast } from "sonner";
 import { CursorLogo } from "@adeli-chat/ui/brand/cursor-logo";
 import { Badge } from "@adeli-chat/ui/components/badge";
 import { Button } from "@adeli-chat/ui/components/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@adeli-chat/ui/components/tabs";
 import type { ConnectedApp } from "@/lib/mcp/connections";
 import { MCP_DISPLAY_NAME } from "@/lib/mcp/config";
 import { claudeCodeCommand, claudeConnectorLink, codexCommands, cursorConfig, cursorInstallLink } from "@/lib/mcp/install-links";
@@ -85,6 +84,8 @@ function AgentLogo({ agent, large }: { agent: Agent; large?: boolean }) {
 }
 
 function AgentGuide({ agent, connections, onBack }: { agent: Agent; connections: number; onBack: () => void }) {
+  const [selectedGuide, setSelectedGuide] = useState<Guide | null>(null);
+  const guide = agent.guides.length === 1 ? agent.guides[0] : selectedGuide;
   return (
     <section className="space-y-6" aria-labelledby={`${agent.id}-guide-heading`}>
       <button type="button" onClick={onBack} className="inline-flex items-center gap-1 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:underline">
@@ -100,19 +101,26 @@ function AgentGuide({ agent, connections, onBack }: { agent: Agent; connections:
             <p className="font-medium">Connected</p>
             <p className="text-sm text-muted-foreground">{connections} {connections === 1 ? "connection" : "connections"}</p>
           </div>
-          <a href="#connected-apps" className="text-sm text-link underline underline-offset-4">Manage connections</a>
+          <a href="/mcp-apis#connected-apps" className="text-sm text-link underline underline-offset-4">Manage connections</a>
         </div>
       ) : null}
-      {agent.guides.length > 1 ? (
-        <Tabs defaultValue={agent.guides[0].label}>
-          <TabsList variant="line">
-            {agent.guides.map((guide) => <TabsTrigger key={guide.label} value={guide.label}>{guide.label}</TabsTrigger>)}
-          </TabsList>
-          {agent.guides.map((guide) => <TabsContent key={guide.label} value={guide.label} className="pt-4"><Steps steps={guide.steps} /></TabsContent>)}
-        </Tabs>
+      {guide ? (
+        <div className="space-y-4">
+          {agent.guides.length > 1 ? <Button variant="outline" onClick={() => setSelectedGuide(null)}><ChevronLeft /> Change app</Button> : null}
+          <h4 className="font-medium">{guide.label}</h4>
+          <Steps steps={guide.steps} />
+        </div>
       ) : (
-        <Steps steps={agent.guides[0].steps} />
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">Choose the app you want to connect.</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {agent.guides.map((option) => (
+              <Button key={option.label} variant="outline" size="lg" onClick={() => setSelectedGuide(option)}>{option.label}</Button>
+            ))}
+          </div>
+        </div>
       )}
+      {guide ? (
       <div className="space-y-3">
         <h4 className="font-medium">Try it out</h4>
         <ul className="space-y-2">
@@ -124,6 +132,7 @@ function AgentGuide({ agent, connections, onBack }: { agent: Agent; connections:
           ))}
         </ul>
       </div>
+      ) : null}
     </section>
   );
 }
@@ -225,7 +234,7 @@ function buildAgents(mcpUrl: string, oauthEnabled: boolean, token: DefaultToken)
           label: "Claude Web/Desktop",
           steps: [
             { title: "Go to Claude", body: <p>Open Claude in your browser or desktop app. <Link href="https://claude.ai">claude.ai</Link></p> },
-            { title: "Open Customize", body: <p>Click &quot;Customize&quot;, then &quot;Add&quot;, then &quot;Add custom connector&quot;. Or skip to step 4 with <Link href={claudeConnectorLink(mcpUrl)}>this link</Link>, which fills it in for you.</p> },
+            { title: "Open Plugins", body: <p>Click &quot;Plugins&quot;, then &quot;Add&quot;, then &quot;Add custom connector&quot;. Or skip to step 4 with <Link href={claudeConnectorLink(mcpUrl)}>this link</Link>, which fills it in for you.</p> },
             { title: "Enter the server URL", body: <Fields items={[["Name", MCP_DISPLAY_NAME], ["Remote MCP server URL", <Value key="url" value={mcpUrl} label="Copy server URL" />]]} /> },
             { title: "Sign in to LedaChat", body: <p>Click &quot;Add&quot;, then &quot;Connect&quot;. {SIGN_IN}</p> },
             { title: "Finish", body: <p>LedaChat is in your connectors. Turn it on in a chat from the tools menu.</p> },
