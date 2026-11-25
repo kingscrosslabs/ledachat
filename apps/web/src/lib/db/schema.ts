@@ -378,6 +378,12 @@ export const runs = pgTable("runs", {
   /** Set when we've already asked them to resend an invalid email, so we only nudge once. */
   emailRetriedAt: timestamp("email_retried_at", { withTimezone: true }),
   emailAt: timestamp("email_at", { withTimezone: true }),
+  /**
+   * When the last DM with a button (the Opening DM or the follow gate) went out, and that button's label.
+   * Instagram sometimes never sends a tap's webhook; the missed-tap check looks for this label in the thread after this time.
+   */
+  lastButtonDmAt: timestamp("last_button_dm_at", { withTimezone: true }),
+  lastButtonLabel: text("last_button_label"),
   ...timestamps,
 }, (table) => [
   index("runs_ig_sender_state").on(table.igSenderId, table.state),
