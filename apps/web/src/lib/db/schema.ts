@@ -414,3 +414,25 @@ export const processedStripeEvents = pgTable("processed_stripe_events", {
   eventId: text("event_id").primaryKey(),
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Customer-owned outbound email integrations. Never expose credentials to clients. */
+export const emailConnections = pgTable("email_connections", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id").notNull().references(() => authUser.id, { onDelete: "cascade" }),
+  provider: text("provider", { enum: ["klaviyo", "loops"] }).notNull(),
+  secret: text("secret").notNull(),
+  blocked: boolean("blocked").notNull().default(false),
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+  ...timestamps,
+}, (t) => [unique("email_connections_user_provider").on(t.userId, t.provider)]);
+
+export const emailSyncJobs = pgTable("email_sync_jobs", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  connectionId: text("connection_id").notNull().references(() => emailConnections.id, { onDelete: "cascade" }),
+  email: text("email").notNull(),
+  state: text("state", { enum: ["pending", "synced", "failed"] }).notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+  error: text("error"),
+  ...timestamps,
+}, (t) => [unique("email_sync_connection_email").on(t.connectionId, t.email), index("email_sync_due").on(t.state, t.nextAttemptAt)]);

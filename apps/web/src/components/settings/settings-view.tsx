@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
+import { EmailIntegrations } from "./email-integrations";
+import type { ConnectionStatus } from "@/lib/email-integrations/service";
 import { PageHeading } from "@/components/page-heading";
 import { PlanCard, type PlanStatus } from "@/components/settings/plan-card";
 import { ThemeToggle } from "@adeli-chat/ui/theme-toggle";
@@ -35,7 +37,7 @@ import type { CurrentUser } from "@/lib/auth/session";
 export type AdeliStatus = { configured: boolean; rejected: boolean; baseURL: string; profileName: string | null; localProfile: boolean };
 
 /** `plan`: null when this install has no billing (local or self-hosted), which hides the Plan card. */
-export function SettingsView({ adeli, account, user, liveCount, plan = null }: { adeli: AdeliStatus; account: AdeliAccount | null; user: CurrentUser | null; liveCount: number; plan?: PlanStatus | null }) {
+export function SettingsView({ adeli, account, user, liveCount, plan = null, emailConnections = [] }: { adeli: AdeliStatus; account: AdeliAccount | null; user: CurrentUser | null; liveCount: number; plan?: PlanStatus | null; emailConnections?: ConnectionStatus[] }) {
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6 p-4 md:p-8">
       <PageHeading title="Settings" description="Your Instagram account and preferences." />
@@ -43,6 +45,7 @@ export function SettingsView({ adeli, account, user, liveCount, plan = null }: {
         {adeli.localProfile && adeli.configured ? <LocalProfileCard profileName={adeli.profileName} /> : null}
         <InstagramCard account={account} liveCount={liveCount} canConnect={adeli.configured} />
         {plan ? <PlanCard plan={plan} liveCount={liveCount} /> : null}
+        <EmailIntegrations connections={emailConnections} />
         <AppearanceCard />
         {user ? <SignedInCard user={user} /> : null}
       </div>
