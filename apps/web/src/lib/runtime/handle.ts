@@ -210,7 +210,7 @@ async function handlePostback(userId: string, event: MessagePostbackEvent) {
   const emailCapture = emailCaptureOf(automation);
   const followGate = followGateOf(automation);
   trackStep(userId, "dm_button_tapped", run.automationId, { email_capture_enabled: emailCapture.enabled, follow_gate_enabled: followGate.enabled });
-  if (followGate.enabled && !(await followsAccount(run.id, row.account.adeliAccountId, event.data.senderId))) {
+  if (followGate.enabled && !(await followsAccountAfterTap(run.id, row.account.adeliAccountId, event.data.senderId))) {
     try {
       await sendAfterTap(() => adeliCall((client) => client.messages.sendInstagramMessage({
         body: {
@@ -359,6 +359,19 @@ async function followsAccount(runId: string, adeliAccountId: string, igsid: stri
     await updateRun(runId, { error: `Follow check failed, sent anyway. ${errorText(error)}`.slice(0, 500) });
     return true;
   }
+}
+
+/**
+ * How long a tap waits before the follow check. For about 20s after a tap,
+ * Instagram still answers "not following" for people who follow, so one
+ * check after this wait is right where a check at the tap is not. Taps that
+ * arrive during the wait are ignored, since the run is already claimed.
+ */
+export const FOLLOW_CHECK_DELAY_MS = 30_000;
+
+async function followsAccountAfterTap(runId: string, adeliAccountId: string, igsid: string) {
+  await sleep(FOLLOW_CHECK_DELAY_MS);
+  return followsAccount(runId, adeliAccountId, igsid);
 }
 
 async function sendText(userId: string, adeliAccountId: string, recipientId: string, text: string) {

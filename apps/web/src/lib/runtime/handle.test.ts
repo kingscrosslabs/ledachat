@@ -9,9 +9,10 @@ import { db, schema } from "@/lib/db";
 import { apiError, fakeAdeli, type Sent } from "../../../test/fake-adeli";
 import { resetDatabase, seedAccount, seedLiveAutomation, seedUser, TEST_KEY } from "../../../test/db-helpers";
 
-import { findEmail, handleEvent } from "./handle";
+import { FOLLOW_CHECK_DELAY_MS, findEmail, handleEvent } from "./handle";
+import { sleep } from "./sleep";
 
-// The window_closed retries wait seconds between tries; tests don't.
+// The follow check and the window_closed retries wait seconds; tests don't.
 vi.mock("./sleep", () => ({ sleep: vi.fn(async () => {}) }));
 
 let eventCount = 0;
@@ -497,6 +498,27 @@ describe("follow gate", () => {
       buttons: [{ type: "postback", title: "I'm following", payload: run.id }],
     });
     expect(await onlyRun()).toMatchObject({ state: "awaiting_follow", igSenderId: "ig_fan" });
+  });
+
+  it("waits before every follow check, since Instagram is slow to report a follow after a tap", async () => {
+    const run = await openRun();
+    const adeli = fakeAdeli([follows(false, true)]);
+    vi.mocked(sleep).mockClear();
+    await handleEvent(USER, postbackEvent(run.id));
+    await handleEvent(USER, postbackEvent(run.id));
+    expect(adeli.sent.filter((sent) => sent.path === USER_PATH)).toHaveLength(2);
+    expect(vi.mocked(sleep).mock.calls).toEqual([[FOLLOW_CHECK_DELAY_MS], [FOLLOW_CHECK_DELAY_MS]]);
+  });
+
+  it("doesn't wait on a tap when the follow gate is off", async () => {
+    await db().update(schema.automations).set({ followGate: { ...gate, enabled: false } }).where(eq(schema.automations.id, automationId));
+    fakeAdeli();
+    await handleEvent(USER, commentEvent());
+    const run = await onlyRun();
+    fakeAdeli();
+    vi.mocked(sleep).mockClear();
+    await handleEvent(USER, postbackEvent(run.id));
+    expect(vi.mocked(sleep)).not.toHaveBeenCalled();
   });
 
   it("sends the retry while they still don't follow, then the link once they do", async () => {
