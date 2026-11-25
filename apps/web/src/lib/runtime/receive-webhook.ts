@@ -1,3 +1,4 @@
+import { processEmailJobs } from "@/lib/email-integrations/service";
 import "server-only";
 
 import { MalformedResponseError } from "@adeli/sdk";
@@ -33,6 +34,8 @@ export async function receiveWebhook(request: Request, candidates: Array<{ userI
     } catch (error) {
       console.error(`Adeli webhook ${event.id} (${event.type}) failed: ${error instanceof Error ? error.message : String(error)}`);
       trackError(error, owner.userId, { adeli_event_type: event.type });
+    } finally {
+      await processEmailJobs(owner.userId).catch(() => console.error("Email sync worker failed; queued contacts will retry."));
     }
   });
   return Response.json({ received: true });

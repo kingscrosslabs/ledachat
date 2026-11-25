@@ -99,6 +99,13 @@
       "when": 1795108210056,
       "tag": "0013_connect_links",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1795640213119,
+      "tag": "0014_email_integrations",
+      "breakpoints": true
     }
   ]
 }

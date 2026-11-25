@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
+import { EmailIntegrations } from "./email-integrations";
+import type { ConnectionStatus } from "@/lib/email-integrations/service";
 import { PageHeading } from "@/components/page-heading";
 import { PlanCard, type PlanStatus } from "@/components/settings/plan-card";
 import { ThemeToggle } from "@adeli-chat/ui/theme-toggle";
@@ -38,7 +40,7 @@ export type AdeliStatus = { configured: boolean; rejected: boolean; baseURL: str
  * `plan`: null when this install has no billing (local or self-hosted), which hides the Plan card.
  * `deleteBlocker`: why the account can't be deleted yet, or null when it can.
  */
-export function SettingsView({ adeli, account, user, liveCount, plan = null, deleteBlocker = null }: { adeli: AdeliStatus; account: AdeliAccount | null; user: CurrentUser | null; liveCount: number; plan?: PlanStatus | null; deleteBlocker?: string | null }) {
+export function SettingsView({ adeli, account, user, liveCount, plan = null, deleteBlocker = null, emailConnections = [] }: { adeli: AdeliStatus; account: AdeliAccount | null; user: CurrentUser | null; liveCount: number; plan?: PlanStatus | null; deleteBlocker?: string | null; emailConnections?: ConnectionStatus[] }) {
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6 p-4 md:p-8">
       <PageHeading title="Settings" description="Your Instagram account and preferences." />
@@ -46,6 +48,7 @@ export function SettingsView({ adeli, account, user, liveCount, plan = null, del
         {adeli.localProfile && adeli.configured ? <LocalProfileCard profileName={adeli.profileName} /> : null}
         <InstagramCard account={account} liveCount={liveCount} canConnect={adeli.configured} />
         {plan ? <PlanCard plan={plan} liveCount={liveCount} /> : null}
+        <EmailIntegrations connections={emailConnections} />
         <AppearanceCard />
         {user ? <SignedInCard user={user} /> : null}
         {user ? <DeleteAccountCard email={user.email} blocker={deleteBlocker} /> : null}

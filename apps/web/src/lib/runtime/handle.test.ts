@@ -419,6 +419,7 @@ describe("email capture", () => {
 
   it("saves the lead and sends the Final DM once a valid email arrives, once", async () => {
     await tapped();
+    await db().insert(schema.emailConnections).values({ userId: USER, provider: "loops", secret: "encrypted-test-placeholder" });
     const adeli = fakeAdeli();
     const reply = messageEvent("sure, it's Fan@Example.com thanks");
     await handleEvent(USER, reply);
@@ -430,6 +431,7 @@ describe("email capture", () => {
     const run = await onlyRun();
     expect(run.state).toBe("final_sent");
     expect(run.emailAt).not.toBeNull();
+    expect(await db().select().from(schema.emailSyncJobs)).toEqual([expect.objectContaining({ email: "fan@example.com", state: "pending" })]);
     expect((await statsFor([automationId])).get(automationId)?.emails).toBe(1);
   });
 

@@ -1,3 +1,4 @@
+import { connectionStatuses } from "@/lib/email-integrations/service";
 import type { PlanStatus } from "@/components/settings/plan-card";
 import { SettingsView } from "@/components/settings/settings-view";
 import { deletionBlocker } from "@/lib/account";
@@ -22,7 +23,7 @@ export default async function SettingsPage() {
   const adeli = { configured: Boolean(config), rejected: serverKeyRejected(), baseURL: config?.baseURL ?? DEFAULT_BASE_URL, profileName: settings.adeliProfileName, localProfile: !authEnabled() };
   const plan = await planStatus(user.id);
   const deleteBlocker = authEnabled() ? await deletionBlocker(user.id) : null;
-  return <SettingsView adeli={adeli} account={account} user={authEnabled() ? user : null} liveCount={automations.filter((automation) => automation.status === "live").length} plan={plan} deleteBlocker={deleteBlocker} />;
+  return <SettingsView emailConnections={await connectionStatuses(user.id)} adeli={adeli} account={account} user={authEnabled() ? user : null} liveCount={automations.filter((automation) => automation.status === "live").length} plan={plan} deleteBlocker={deleteBlocker} />;
 }
 
 /** The Plan card's data, or null when billing is off. A missed webhook is repaired first, without ever blocking the page. */

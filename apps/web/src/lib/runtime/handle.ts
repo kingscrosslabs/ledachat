@@ -1,3 +1,4 @@
+import { enqueueContact } from "@/lib/email-integrations/service";
 import "server-only";
 
 import type { CommentCreatedEvent, MessageCreatedEvent, MessagePostbackEvent, WebhookEvent } from "@adeli/sdk/helpers";
@@ -283,14 +284,19 @@ async function handleMessage(userId: string, event: MessageCreatedEvent) {
 
   // The same claim as a tap: only one delivery of their reply moves the run on.
   const now = new Date();
-  const [run] = await db().update(schema.runs)
-    .set({ state: "final_sending", emailAt: now, updatedAt: now })
-    .where(and(eq(schema.runs.id, waiting.run.id), eq(schema.runs.state, "awaiting_email")))
-    .returning({ id: schema.runs.id });
+  const run = await db().transaction(async (tx) => {
+    const [run] = await tx.update(schema.runs)
+      .set({ state: "final_sending", emailAt: now, updatedAt: now })
+      .where(and(eq(schema.runs.id, waiting.run.id), eq(schema.runs.state, "awaiting_email")))
+      .returning({ id: schema.runs.id });
+    if (!run) return null;
+    await tx.insert(schema.leads)
+      .values({ automationId: waiting.automation.id, igUserId: waiting.run.igUserId, igUsername: waiting.run.igUsername, email })
+      .onConflictDoUpdate({ target: [schema.leads.automationId, schema.leads.igUserId], set: { email, updatedAt: now } });
+    await enqueueContact(tx, userId, email);
+    return run;
+  });
   if (!run) return;
-  await db().insert(schema.leads)
-    .values({ automationId: waiting.automation.id, igUserId: waiting.run.igUserId, igUsername: waiting.run.igUsername, email })
-    .onConflictDoUpdate({ target: [schema.leads.automationId, schema.leads.igUserId], set: { email, updatedAt: now } });
   trackStep(userId, "lead_captured", waiting.automation.id);
   await sendFinalDm(userId, run.id, waiting.automation.id, account.adeliAccountId, senderId, waiting.automation.finalDm);
 }
