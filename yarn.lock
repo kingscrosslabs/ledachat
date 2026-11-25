@@ -96,6 +96,7 @@ __metadata:
     react-dom: "npm:19.2.8"
     react-icons: "npm:^5.7.0"
     shadcn: "npm:^4.20.1"
+    sharp: "npm:^0.35.5"
     sonner: "npm:^2.0.8"
     stripe: "npm:^23.1.0"
     tailwindcss: "npm:^4"
@@ -9339,7 +9340,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"sharp@npm:^0.35.4":
+"sharp@npm:^0.35.4, sharp@npm:^0.35.5":
   version: 0.35.5
   resolution: "sharp@npm:0.35.5"
   dependencies:

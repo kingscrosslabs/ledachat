@@ -5,6 +5,7 @@ import { after } from "next/server";
 
 import { latestMedia, missingGrantsFor, missingGrantsMessage } from "@/lib/adeli/instagram";
 import { snapshotOf } from "./snapshot";
+import { pinThumbnail } from "./thumbnail";
 import { alertWentLive } from "@/lib/alerts/dopamine";
 import { trackError, type Source } from "@/lib/analytics/server";
 import { appUrl } from "@/lib/app-url";
@@ -98,6 +99,11 @@ function keepShape(content: AutomationContent): AutomationContent {
   return { ...content, trigger, commentReply: { ...content.commentReply, enabled: false }, followGate: followGateOf(content) };
 }
 
+/** `content` with its post thumbnail kept as a copy (`thumbnail.ts`), reusing the one `saved` has for the same post. */
+async function withPinnedThumbnail(content: AutomationContent, saved: Automation): Promise<AutomationContent> {
+  return { ...content, trigger: await pinThumbnail(content.trigger, saved.trigger) };
+}
+
 export function parseContent(input: unknown): AutomationContent {
   const parsed = automationContentSchema.safeParse(input);
   if (!parsed.success) throw new ServiceError("That automation doesn't look right. Reload and try again.");
@@ -118,7 +124,8 @@ export async function loadOwn(userId: string, id: string): Promise<{ account: Co
 export async function createAutomation(userId: string, content: Partial<AutomationContent> = {}, type: AutomationType = "comment_to_dm"): Promise<{ id: string }> {
   const account = await requireAccount(userId);
   const [{ total }] = await db().select({ total: count() }).from(schema.automations).where(eq(schema.automations.accountId, account.id));
-  const values = keepShape(parseContent({ ...defaultAutomationContent(total, type), ...content, type }));
+  const parsed = keepShape(parseContent({ ...defaultAutomationContent(total, type), ...content, type }));
+  const values = { ...parsed, trigger: await pinThumbnail(parsed.trigger) };
   const [row] = await db().insert(schema.automations).values({ accountId: account.id, ...values }).returning({ id: schema.automations.id });
   return { id: row.id };
 }
@@ -130,12 +137,13 @@ export async function createFirstAutomation(userId: string): Promise<{ id: strin
   if (existing[0]) return existing[0];
   const media = await latestMedia(userId, account.accountId);
   const defaults = defaultAutomationContent(0);
-  const content = parseContent({
+  const parsed = parseContent({
     ...defaults,
     name: "My first automation",
     trigger: { ...defaults.trigger, keywords: ["GUIDE"], mediaId: media?.id ?? null, mediaSnapshot: media ? snapshotOf(media) : null },
     finalDm: { type: "text_buttons", text: "Here's your guide! Tap below to take a look.", buttons: [{ label: "Get the guide", url: "https://ledachat.com" }] },
   });
+  const content = { ...parsed, trigger: await pinThumbnail(parsed.trigger) };
   return db().transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`onboarding:${account.id}`}))`);
     const [existing] = await tx.select({ id: schema.automations.id }).from(schema.automations).where(eq(schema.automations.accountId, account.id)).limit(1);
@@ -148,7 +156,7 @@ export async function createFirstAutomation(userId: string): Promise<{ id: strin
 /** Saves content. Saving a live automation applies at once, so it must pass Go Live checks (D4). */
 export async function saveAutomation(userId: string, id: string, input: unknown): Promise<ActionResult> {
   const { account, automation } = await loadOwn(userId, id);
-  const content = keepShape({ ...parseContent(input), type: automation.type });
+  const content = await withPinnedThumbnail(keepShape({ ...parseContent(input), type: automation.type }), automation);
   if (automation.status === "live") {
     const rejected = await checkLive(account.id, id, content);
     if (rejected) return rejected;
@@ -170,7 +178,7 @@ export function upgradeUrl() {
  */
 export async function goLive(userId: string, id: string, input?: unknown, source: Source = "app"): Promise<ActionResult> {
   const { account, automation } = await loadOwn(userId, id);
-  const content = input ? keepShape({ ...parseContent(input), type: automation.type }) : automation;
+  const content = input ? await withPinnedThumbnail(keepShape({ ...parseContent(input), type: automation.type }), automation) : automation;
   const rejected = await checkLive(account.id, id, content);
   if (rejected) return rejected;
   const wasLive = automation.status === "live";
