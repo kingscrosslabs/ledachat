@@ -60,12 +60,15 @@ The automation runtime (`src/lib/runtime/handle.ts`) records each run's steps on
 | `automation_triggered` | `trigger` (`comment`, `earlier_comment`, `story_reply`), `post_scope`, `trigger_match` |
 | `comment_reply_sent` | |
 | `opening_dm_sent` | |
-| `dm_button_tapped` | `email_capture_enabled`, `follow_gate_enabled` |
+| `dm_button_tapped` | `email_capture_enabled`, `follow_gate_enabled`, `source` (`webhook`, or `recovered` when the missed-tap check found it) |
 | `follow_gate_sent` | `recheck` (true when they tapped but do not follow yet) |
 | `email_requested` | |
 | `invalid_email_received` | |
 | `lead_captured` | |
 | `final_dm_sent` | `buttons` |
+| `missed_tap_recovered` | `step` (`opening`, `follow`), `check` (1 to 3): a tap Instagram sent no webhook for, found in the conversation |
+| `missed_tap_check_exhausted` | `step`: three checks found no tap |
+| `send_retried` | `step` (`opening_dm`, `follow_gate`, `email_request`, `final_dm`), `error_code`: a DM tried again after a temporary error |
 | `automation_step_failed` | `step` (`comment_reply`, `opening_dm`, `follow_gate`, `email_request`, `email_retry`, `final_dm`, `branding`), `error_code` |
 
 Webhook handling errors go to PostHog error tracking (`trackError`), with `adeli_event_type`.

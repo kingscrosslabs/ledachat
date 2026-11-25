@@ -94,6 +94,7 @@ One LedaChat install uses one Adeli organization, through the API key in `ADELI_
 | `GOOGLE_CLIENT_SECRET` | Yes | From the Google OAuth client. |
 | `ALLOWED_EMAILS` | No | Comma-separated emails that may sign in. Empty: anyone with Google can sign in. |
 | `BETTER_AUTH_API_KEY` | No | A [Better Auth Infrastructure](https://better-auth.com/docs/infrastructure/getting-started) project key. Set it to see and manage your users and sessions in its dashboard. |
+| `MISSED_TAP_RECOVERY` | No | Instagram sometimes drops a button tap's webhook; a background check (Vercel Workflow) finds those taps in the conversation. Set to `off` to turn it off, for example when self-hosting somewhere Vercel Workflow can't run. |
 | `LEDACHAT_BRANDING` | No | Free-plan users get a "Powered by LedaChat" message after the Final DM. Set to `off` to turn it off for everyone. |
 | `APP_URL` | No | Set it when you use a custom domain. Defaults to the Vercel production domain. |
 | `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN` | No | PostHog project token (`phc_...`) for product analytics. Empty: nothing is sent. See [docs/analytics.md](docs/analytics.md). |

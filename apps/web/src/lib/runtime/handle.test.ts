@@ -9,10 +9,21 @@ import { db, schema } from "@/lib/db";
 import { apiError, fakeAdeli, type Sent } from "../../../test/fake-adeli";
 import { resetDatabase, seedAccount, seedLiveAutomation, seedUser, TEST_KEY } from "../../../test/db-helpers";
 
-import { findEmail, handleEvent } from "./handle";
+import type { ConversationMessage, ConversationRead } from "@/lib/adeli/conversations";
 
-// The window_closed retries wait seconds between tries; tests don't.
+import { findEmail, handleEvent } from "./handle";
+import { checkMissedTap, findMissedTap } from "./missed-taps";
+
+// The window_closed and send retries wait seconds between tries; tests don't.
 vi.mock("./sleep", () => ({ sleep: vi.fn(async () => {}) }));
+
+const workflowMocks = vi.hoisted(() => ({
+  start: vi.fn<(workflow: unknown, args: unknown[]) => Promise<object>>(async () => ({})),
+  // @adeli/sdk 0.9.0 has no conversation read, so it can't go through the fake fetch yet.
+  readConversation: vi.fn(async (): Promise<ConversationRead> => ({ available: true, messages: [] })),
+}));
+vi.mock("workflow/api", () => ({ start: workflowMocks.start }));
+vi.mock("@/lib/adeli/conversations", () => ({ readConversation: workflowMocks.readConversation }));
 
 let eventCount = 0;
 
@@ -68,6 +79,8 @@ const USER = "user_1";
 let automationId: string;
 
 beforeEach(async () => {
+  workflowMocks.start.mockClear();
+  workflowMocks.readConversation.mockReset().mockResolvedValue({ available: true, messages: [] });
   // Most tests count the messages a run sends; the branding tests turn it back on.
   vi.stubEnv("LEDACHAT_BRANDING", "off");
   await resetDatabase();
@@ -276,7 +289,8 @@ describe("Final DM links and branding", () => {
     const run = await onlyRun();
     const adeli = fakeAdeli([(sent) => sent.path === "/messages/instagram" ? apiError(502, "provider_error") : undefined]);
     await handleEvent(USER, postbackEvent(run.id));
-    expect(adeli.messages()).toHaveLength(1);
+    // Three tries of the Final DM (a temporary error is retried), and no branding after them.
+    expect(adeli.messages().map((sent) => sent.body?.text)).toEqual(["Here it is!", "Here it is!", "Here it is!"]);
     expect((await onlyRun()).state).toBe("failed");
   });
 
@@ -644,5 +658,160 @@ describe("separate users", () => {
     await handleEvent(OTHER, postbackEvent(run.id));
     expect(adeli.sent).toHaveLength(0);
     expect((await onlyRun()).state).toBe("opening_sent");
+  });
+});
+
+describe("send retries", () => {
+  it("retries an Opening DM Instagram refused for a temporary reason, and sends it once it goes through", async () => {
+    let refusals = 2;
+    const adeli = fakeAdeli([(sent) => sent.path === "/messages/instagram" && refusals-- > 0 ? apiError(502, "provider_error") : undefined]);
+    await handleEvent(USER, commentEvent());
+    expect(adeli.messages()).toHaveLength(3);
+    expect(await onlyRun()).toMatchObject({ state: "opening_sent", error: null });
+  });
+
+  it("counts a private reply as sent when a retry finds the first try went out", async () => {
+    let tries = 0;
+    fakeAdeli([(sent) => {
+      if (sent.path !== "/messages/instagram") return undefined;
+      tries += 1;
+      return tries === 1 ? apiError(503, "service_unavailable") : apiError(409, "private_reply_already_sent");
+    }]);
+    await handleEvent(USER, commentEvent());
+    expect(tries).toBe(2);
+    expect((await onlyRun()).state).toBe("opening_sent");
+  });
+
+  it("doesn't retry a refusal that will refuse again", async () => {
+    const adeli = fakeAdeli([(sent) => sent.path === "/messages/instagram" ? apiError(403, "permission_required") : undefined]);
+    await handleEvent(USER, commentEvent());
+    expect(adeli.messages()).toHaveLength(1);
+    expect((await onlyRun()).state).toBe("failed");
+  });
+});
+
+describe("missed-tap check", () => {
+  const gate = { enabled: true, text: "Follow me first!", buttonLabel: "I'm following", retryText: "Still not seeing it." };
+
+  function inbound(text: string, overrides: Partial<ConversationMessage> = {}): ConversationMessage {
+    return { id: `m_${text}`, direction: "inbound", fromId: "ig_fan", text, createdAt: new Date().toISOString(), ...overrides };
+  }
+
+  function thread(...messages: ConversationMessage[]) {
+    workflowMocks.readConversation.mockResolvedValue({ available: true, messages });
+  }
+
+  function follows(isFollowing: boolean) {
+    return (sent: Sent) => sent.path === "/messages/instagram/users/ig_fan"
+      ? { status: 200, body: { platform: "instagram", accountId: "acc_1", profileId: "profile_1", user: { id: "ig_fan", username: "fan", name: null, followerCount: null, isFollowing, isFollowedByAccount: null } } }
+      : undefined;
+  }
+
+  async function openRun() {
+    fakeAdeli();
+    await handleEvent(USER, commentEvent());
+    return onlyRun();
+  }
+
+  function checkFor(run: { id: string; lastButtonDmAt: Date | null }, step: "opening" | "follow" = "opening", check = 1) {
+    return checkMissedTap({ runId: run.id, step, sentAt: run.lastButtonDmAt!.toISOString(), check, last: check === 3 });
+  }
+
+  it("starts a check after the Opening DM, for the button it sent", async () => {
+    const run = await openRun();
+    expect(run.lastButtonLabel).toBe("Yes please");
+    expect(workflowMocks.start).toHaveBeenCalledTimes(1);
+    expect(workflowMocks.start.mock.calls[0]).toEqual([expect.any(Function), [{ runId: run.id, step: "opening", sentAt: run.lastButtonDmAt!.toISOString() }]]);
+  });
+
+  it("starts no check with MISSED_TAP_RECOVERY=off, and carries on when one can't start", async () => {
+    vi.stubEnv("MISSED_TAP_RECOVERY", "off");
+    await openRun();
+    expect(workflowMocks.start).not.toHaveBeenCalled();
+
+    vi.stubEnv("MISSED_TAP_RECOVERY", "");
+    await resetDatabase();
+    await seedUser(USER);
+    await seedLiveAutomation((await seedAccount(USER)).id);
+    workflowMocks.start.mockRejectedValueOnce(new Error("no workflow runtime"));
+    vi.spyOn(console, "error").mockImplementationOnce(() => {});
+    expect((await openRun()).state).toBe("opening_sent");
+  });
+
+  it("handles a tap Instagram recorded but sent no webhook for, once", async () => {
+    const run = await openRun();
+    thread(inbound("Yes please"));
+    const adeli = fakeAdeli();
+    await expect(checkFor(run)).resolves.toBe("recovered");
+    expect(workflowMocks.readConversation).toHaveBeenCalledWith("acc_1", "ig_fan");
+    expect(adeli.messages().map((sent) => sent.body?.text)).toEqual(["Here it is!"]);
+    expect(await onlyRun()).toMatchObject({ state: "final_sent", igSenderId: "ig_fan" });
+
+    // The webhook turns up late: the run already moved on.
+    await handleEvent(USER, postbackEvent(run.id));
+    expect(adeli.messages()).toHaveLength(1);
+  });
+
+  it("waits while the thread has no tap: other text, our own message, someone else, or older than the DM", async () => {
+    const run = await openRun();
+    const before = new Date(run.lastButtonDmAt!.getTime() - 60_000).toISOString();
+    thread(
+      inbound("yes please!!"),
+      inbound("Yes please", { direction: "outbound", fromId: "ig_self" }),
+      inbound("Yes please", { fromId: "ig_other" }),
+      inbound("Yes please", { createdAt: before }),
+    );
+    const adeli = fakeAdeli();
+    await expect(checkFor(run)).resolves.toBe("waiting");
+    await expect(checkFor(run, "opening", 3)).resolves.toBe("waiting");
+    expect(adeli.messages()).toHaveLength(0);
+    expect((await onlyRun()).state).toBe("opening_sent");
+  });
+
+  it("stops once the run moved on, for an older button DM, or while the SDK can't read conversations", async () => {
+    const run = await openRun();
+    await expect(checkMissedTap({ runId: run.id, step: "opening", sentAt: new Date(0).toISOString(), check: 1, last: false })).resolves.toBe("done");
+    await expect(checkFor(run, "follow")).resolves.toBe("done");
+    workflowMocks.readConversation.mockResolvedValueOnce({ available: false });
+    await expect(checkFor(run)).resolves.toBe("done");
+
+    fakeAdeli();
+    await handleEvent(USER, postbackEvent(run.id));
+    workflowMocks.readConversation.mockClear();
+    await expect(checkFor(run)).resolves.toBe("done");
+    expect(workflowMocks.readConversation).not.toHaveBeenCalled();
+  });
+
+  it("recovers a follow gate tap the same way: checks the follow again, then sends the link", async () => {
+    await db().update(schema.automations).set({ followGate: gate }).where(eq(schema.automations.id, automationId));
+    const opened = await openRun();
+    fakeAdeli([follows(false)]);
+    await handleEvent(USER, postbackEvent(opened.id));
+    const gated = await onlyRun();
+    expect(gated).toMatchObject({ state: "awaiting_follow", lastButtonLabel: "I'm following" });
+    expect(workflowMocks.start.mock.calls.at(-1)?.[1]).toEqual([{ runId: gated.id, step: "follow", sentAt: gated.lastButtonDmAt!.toISOString() }]);
+
+    thread(inbound("I'm following"));
+    const adeli = fakeAdeli([follows(true)]);
+    await expect(checkFor(gated, "follow")).resolves.toBe("recovered");
+    expect(adeli.messages().map((sent) => sent.body?.text)).toEqual(["Here it is!"]);
+    expect((await onlyRun()).state).toBe("final_sent");
+  });
+});
+
+describe("findMissedTap", () => {
+  const sentAt = new Date("2026-11-25T17:20:54.000Z");
+  const message = (overrides: Partial<ConversationMessage>): ConversationMessage => ({ id: "m1", direction: "inbound", fromId: "ig_fan", text: "Send it!", createdAt: "2026-11-25T17:21:18.000Z", ...overrides });
+
+  it("matches only the exact label, from the person, after the DM (within a few seconds of clock slack)", () => {
+    const tap = { igsid: "ig_fan", label: "Send it!", sentAt };
+    expect(findMissedTap([message({})], tap)?.id).toBe("m1");
+    expect(findMissedTap([message({ text: "  Send it!  " })], tap)).not.toBeNull();
+    expect(findMissedTap([message({ createdAt: "2026-11-25T17:20:52.000Z" })], tap)).not.toBeNull();
+    expect(findMissedTap([message({ createdAt: "2026-11-25T17:20:40.000Z" })], tap)).toBeNull();
+    expect(findMissedTap([message({ text: "send it" })], tap)).toBeNull();
+    expect(findMissedTap([message({ text: null })], tap)).toBeNull();
+    expect(findMissedTap([message({ fromId: "ig_other" })], tap)).toBeNull();
+    expect(findMissedTap([message({ direction: "outbound" })], tap)).toBeNull();
   });
 });

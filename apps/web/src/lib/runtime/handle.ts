@@ -15,6 +15,7 @@ import { db, schema } from "@/lib/db";
 import { BRANDING_TEXT, showsBranding } from "@/lib/plan";
 
 import { matchComment, matchStoryReply, nextPostAfter } from "./match";
+import { scheduleMissedTapCheck } from "./schedule-missed-tap";
 import { sleep } from "./sleep";
 
 /**
@@ -55,6 +56,10 @@ function trackFailure(userId: string, automationId: string, step: string, error:
   trackStep(userId, "automation_step_failed", automationId, { step, error_code: error instanceof AdeliError ? error.code : "unknown" });
 }
 
+function trackRetry(userId: string, automationId: string, step: string, error: unknown) {
+  trackStep(userId, "send_retried", automationId, { step, error_code: error instanceof AdeliError ? error.code : "unknown" });
+}
+
 function isWindowClosed(error: unknown) {
   return error instanceof AdeliError && error.code === "window_closed";
 }
@@ -76,6 +81,41 @@ async function sendAfterTap(send: () => Promise<unknown>) {
     }
   }
   return send();
+}
+
+/** Waits between tries of a DM that failed for a reason that says nothing went out. */
+const SEND_RETRY_DELAYS_MS = [2_000, 6_000];
+
+/**
+ * Whether a failed send can safely be tried again. Instagram and rate-limit
+ * refusals mean nothing went out. A network failure or timeout might have
+ * sent it, so only a private reply is retried after one: Instagram refuses a
+ * second private reply to the same comment, which `sendWithRetry` reads as sent.
+ */
+function isTemporary(error: unknown, privateReply: boolean) {
+  if (!(error instanceof AdeliError)) return false;
+  if (error.code === "network") return privateReply;
+  return error.code === "provider_error" || error.code === "rate_limited" || (error.status ?? 0) >= 500;
+}
+
+/**
+ * Sends a DM, trying again after 2s and 6s while it fails for a temporary
+ * reason. `onRetry` hears each retry, for analytics.
+ */
+async function sendWithRetry(send: () => Promise<unknown>, options: { privateReply?: boolean; onRetry?: (error: unknown) => void } = {}) {
+  const privateReply = options.privateReply ?? false;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await send();
+    } catch (error) {
+      // On a retry, an earlier try that looked failed went out after all.
+      if (attempt > 0 && privateReply && error instanceof AdeliError && error.code === "private_reply_already_sent") return;
+      const delay = SEND_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || !isTemporary(error, privateReply)) throw error;
+      options.onRetry?.(error);
+      await sleep(delay);
+    }
+  }
 }
 
 function pick<T>(items: T[]) {
@@ -174,16 +214,26 @@ async function handleStoryReply(userId: string, event: MessageCreatedEvent, acco
 }
 
 async function handlePostback(userId: string, event: MessagePostbackEvent) {
+  await handleTap(userId, { runId: event.data.payload, senderId: event.data.senderId, adeliAccountId: event.accountId, source: "webhook" });
+}
+
+/**
+ * A tap on one of a run's buttons: the Opening DM's, or the follow gate's
+ * after an earlier check found no follow. It arrives as a postback webhook,
+ * or, when Instagram never sent that webhook, is found in the conversation by
+ * the missed-tap check (`source: "recovered"`). Both run exactly this.
+ */
+export async function handleTap(userId: string, tap: { runId: string; senderId: string; adeliAccountId: string; source: "webhook" | "recovered" }) {
   const now = new Date();
   // Only this user's runs. Another user's webhook can see the same tap when both use the same Adeli profile.
   const ownAutomations = db().select({ id: schema.automations.id }).from(schema.automations)
     .innerJoin(schema.accounts, eq(schema.accounts.id, schema.automations.accountId))
     .where(eq(schema.accounts.userId, userId));
-  const ownRun = and(eq(schema.runs.id, event.data.payload), inArray(schema.runs.automationId, ownAutomations));
-  // The claim: Postgres serializes these updates, so only one delivery of a tap gets the row back.
+  const ownRun = and(eq(schema.runs.id, tap.runId), inArray(schema.runs.automationId, ownAutomations));
+  // The claim: Postgres serializes these updates, so only one delivery of a tap (or the check that found it) gets the row back.
   // The first tap is on the Opening DM button.
   let [run] = await db().update(schema.runs)
-    .set({ state: "final_sending", tappedAt: now, igSenderId: event.data.senderId, updatedAt: now })
+    .set({ state: "final_sending", tappedAt: now, igSenderId: tap.senderId, updatedAt: now })
     .where(and(ownRun, eq(schema.runs.state, "opening_sent")))
     .returning({ id: schema.runs.id, automationId: schema.runs.automationId });
   // A later one is on the follow gate's button, after an earlier check found no follow.
@@ -202,46 +252,51 @@ async function handlePostback(userId: string, event: MessagePostbackEvent) {
     .innerJoin(schema.accounts, eq(schema.accounts.id, schema.automations.accountId))
     .where(eq(schema.automations.id, run.automationId))
     .limit(1);
-  if (!row || row.account.adeliAccountId !== event.accountId) {
+  if (!row || row.account.adeliAccountId !== tap.adeliAccountId) {
     await updateRun(run.id, { state: "failed", error: "The tap came from a different Instagram account." });
     return;
   }
 
+  const { automationId } = run;
   const automation = toAutomation(row.automation);
   const emailCapture = emailCaptureOf(automation);
   const followGate = followGateOf(automation);
-  trackStep(userId, "dm_button_tapped", run.automationId, { email_capture_enabled: emailCapture.enabled, follow_gate_enabled: followGate.enabled });
-  if (followGate.enabled && !(await followsAccount(run.id, row.account.adeliAccountId, event.data.senderId))) {
+  trackStep(userId, "dm_button_tapped", automationId, { email_capture_enabled: emailCapture.enabled, follow_gate_enabled: followGate.enabled, source: tap.source });
+  if (followGate.enabled && !(await followsAccount(run.id, row.account.adeliAccountId, tap.senderId))) {
     try {
-      await sendAfterTap(() => adeliCall((client) => client.messages.sendInstagramMessage({
+      await sendAfterTap(() => sendWithRetry(() => adeliCall((client) => client.messages.sendInstagramMessage({
         body: {
           accountId: row.account.adeliAccountId,
-          recipient: { id: event.data.senderId },
+          recipient: { id: tap.senderId },
           text: recheck ? followGate.retryText : followGate.text,
           buttons: [{ type: "postback", title: followGate.buttonLabel, payload: run.id }],
         },
-      })));
-      await updateRun(run.id, { state: "awaiting_follow" });
-      trackStep(userId, "follow_gate_sent", run.automationId, { recheck });
+      })), { onRetry: (error) => trackRetry(userId, automationId, "follow_gate", error) }));
+      const sentAt = new Date();
+      await updateRun(run.id, { state: "awaiting_follow", lastButtonDmAt: sentAt, lastButtonLabel: followGate.buttonLabel });
+      trackStep(userId, "follow_gate_sent", automationId, { recheck });
+      await scheduleMissedTapCheck({ runId: run.id, step: "follow", sentAt: sentAt.toISOString() });
     } catch (error) {
       await updateRun(run.id, { state: "failed", error: errorText(error) });
-      trackFailure(userId, run.automationId, "follow_gate", error);
+      trackFailure(userId, automationId, "follow_gate", error);
     }
     return;
   }
 
   if (emailCapture.enabled) {
     try {
-      await sendAfterTap(() => sendText(userId, row.account.adeliAccountId, event.data.senderId, emailCapture.text));
+      await sendAfterTap(() => sendWithRetry(() => sendText(userId, row.account.adeliAccountId, tap.senderId, emailCapture.text), {
+        onRetry: (error) => trackRetry(userId, automationId, "email_request", error),
+      }));
       await updateRun(run.id, { state: "awaiting_email" });
-      trackStep(userId, "email_requested", run.automationId);
+      trackStep(userId, "email_requested", automationId);
     } catch (error) {
       await updateRun(run.id, { state: "failed", error: errorText(error) });
-      trackFailure(userId, run.automationId, "email_request", error);
+      trackFailure(userId, automationId, "email_request", error);
     }
     return;
   }
-  await sendFinalDm(userId, run.id, run.automationId, row.account.adeliAccountId, event.data.senderId, row.automation.finalDm, { afterTap: true });
+  await sendFinalDm(userId, run.id, automationId, row.account.adeliAccountId, tap.senderId, row.automation.finalDm, { afterTap: true });
 }
 
 /**
@@ -335,20 +390,23 @@ export async function liveAutomations(accountId: string) {
 
 async function sendOpeningDm(userId: string, runId: string, automationId: string, adeliAccountId: string, recipient: { commentId: string } | { id: string }, openingDm: Automation["openingDm"]) {
   try {
-    await adeliCall((client) => client.messages.sendInstagramMessage({
+    await sendWithRetry(() => adeliCall((client) => client.messages.sendInstagramMessage({
       body: {
         accountId: adeliAccountId,
         recipient,
         text: openingDm.text,
         buttons: [{ type: "postback", title: openingDm.buttonLabel, payload: runId }],
       },
-    }));
-    await updateRun(runId, { state: "opening_sent", openingSentAt: new Date() });
-    trackStep(userId, "opening_dm_sent", automationId);
+    })), { privateReply: "commentId" in recipient, onRetry: (error) => trackRetry(userId, automationId, "opening_dm", error) });
   } catch (error) {
     await updateRun(runId, { state: "failed", error: errorText(error) });
     trackFailure(userId, automationId, "opening_dm", error);
+    return;
   }
+  const sentAt = new Date();
+  await updateRun(runId, { state: "opening_sent", openingSentAt: sentAt, lastButtonDmAt: sentAt, lastButtonLabel: openingDm.buttonLabel });
+  trackStep(userId, "opening_dm_sent", automationId);
+  await scheduleMissedTapCheck({ runId, step: "opening", sentAt: sentAt.toISOString() });
 }
 
 /**
@@ -441,14 +499,14 @@ async function sendHeldFinalDm(userId: string, account: AccountRow, senderId: st
 }
 
 async function sendFinalDm(userId: string, runId: string, automationId: string, adeliAccountId: string, recipientId: string, finalDm: Automation["finalDm"], options: { afterTap?: boolean } = {}) {
-  const send = () => adeliCall((client) => client.messages.sendInstagramMessage({
+  const send = () => sendWithRetry(() => adeliCall((client) => client.messages.sendInstagramMessage({
     body: {
       accountId: adeliAccountId,
       recipient: { id: recipientId },
       text: finalDm.text,
       buttons: finalDm.buttons.map((button) => ({ type: "url" as const, title: button.label, url: button.url })),
     },
-  }));
+  })), { onRetry: (error) => trackRetry(userId, automationId, "final_dm", error) });
   try {
     await (options.afterTap ? sendAfterTap(send) : send());
     await updateRun(runId, { state: "final_sent" });

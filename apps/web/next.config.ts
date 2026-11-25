@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withWorkflow } from "workflow/next";
 
 /** PostHog's ingestion host (`https://us.i.posthog.com` or `https://eu.i.posthog.com`). */
 const posthogHost = (process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://us.i.posthog.com").replace(/\/+$/, "");
@@ -22,4 +23,5 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// Durable workflows (src/workflows), such as the missed-tap check. See plans/2026-11-25-missed-tap-recovery.md.
+export default withWorkflow(nextConfig);
