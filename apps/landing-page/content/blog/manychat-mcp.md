@@ -38,7 +38,7 @@ faqs:
 relatedPages:
   - /#mcp
   - /#compare
-  - /#options
+  - /#pricing
 tags:
   - manychat
   - mcp
@@ -123,4 +123,4 @@ I moved off ManyChat after upgrading to Pro at $29 a month and then getting a bi
 | Pro | $25 a month | Unlimited automations, no branding, the same price whether 50 or 50,000 people comment |
 | Self-host | Free, MIT license | Unlimited automations on your own Vercel account |
 
-The hosted version is opening soon. [Join the waitlist](/#options) to be first in.
+The hosted version is opening soon. [Join the waitlist](/#pricing) to be first in.

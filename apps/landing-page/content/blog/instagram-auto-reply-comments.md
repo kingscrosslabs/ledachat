@@ -38,7 +38,7 @@ faqs:
 relatedPages:
   - /#how-it-works
   - /#mcp
-  - /#options
+  - /#pricing
 tags:
   - instagram auto reply comments
   - comment to dm
@@ -139,4 +139,4 @@ The usual causes, in order:
 - **Another automation caught it first.** A post's own automation wins over an any-post one.
 - **The account isn't professional,** or the Instagram connection expired. Reconnect it.
 
-LedaChat is free for 10 live automations, and the hosted version is opening soon. [Join the waitlist](/#options) to be first in. If you're moving over from ManyChat, [ManyChat vs LedaChat](/blog/manychat-vs-ledachat) covers what changes.
+LedaChat is free for 10 live automations, and the hosted version is opening soon. [Join the waitlist](/#pricing) to be first in. If you're moving over from ManyChat, [ManyChat vs LedaChat](/blog/manychat-vs-ledachat) covers what changes.

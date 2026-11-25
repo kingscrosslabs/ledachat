@@ -9,7 +9,7 @@ export const SITE_PAGES: ReadonlyArray<{ path: string; title: string }> = [
   { path: "/#how-it-works", title: "How LedaChat's comment to DM works" },
   { path: "/#mcp", title: "Create automations with AI: LedaChat's MCP" },
   { path: "/#compare", title: "LedaChat vs ManyChat" },
-  { path: "/#options", title: "Plans: Free, Pro and self-hosted" },
+  { path: "/#pricing", title: "Plans: Free, Pro and self-hosted" },
   { path: "/#faq", title: "LedaChat FAQ" },
   { path: "/docs/mcp", title: "Connect LedaChat to Claude and other AI agents" },
   { path: "/blog", title: "The LedaChat blog" },

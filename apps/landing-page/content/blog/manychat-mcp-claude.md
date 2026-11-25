@@ -37,7 +37,7 @@ faqs:
 relatedPages:
   - /#mcp
   - /#how-it-works
-  - /#options
+  - /#pricing
 tags:
   - manychat
   - mcp
@@ -54,7 +54,7 @@ ManyChat doesn't have an MCP for Claude, and the community servers can't create 
 ## What do I need before I start?
 
 1. An Instagram professional account (Business or Creator). Switching a personal account is [free in the Instagram app](https://help.instagram.com/502981923235522).
-2. A LedaChat account with your Instagram connected. The hosted version is opening soon, so [join the waitlist](/#options), or self-host it for free from GitHub today.
+2. A LedaChat account with your Instagram connected. The hosted version is opening soon, so [join the waitlist](/#pricing), or self-host it for free from GitHub today.
 3. An MCP client: Claude on the web, desktop or Claude Code, ChatGPT, Cursor, Perplexity, or anything else that speaks MCP.
 
 You don't need a Meta developer app, an Instagram API key or a paid plan. MCP access is on the Free plan.
