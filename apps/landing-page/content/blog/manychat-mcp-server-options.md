@@ -32,7 +32,7 @@ faqs:
 relatedPages:
   - /#compare
   - /#mcp
-  - /#options
+  - /#pricing
 tags:
   - manychat
   - mcp server

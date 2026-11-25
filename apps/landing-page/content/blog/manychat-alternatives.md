@@ -40,7 +40,7 @@ faqs:
       never interacted with you.
 relatedPages:
   - /#compare
-  - /#options
+  - /#pricing
   - /#mcp
 tags:
   - manychat alternative

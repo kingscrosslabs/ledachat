@@ -24,7 +24,7 @@ const NAV_LINKS = [
   { href: "/#how-it-works", label: "How it works" },
   { href: "/#why", label: "Why we built it" },
   { href: "/#mcp", label: "MCP" },
-  { href: "/#options", label: "Options" },
+  { href: "/#pricing", label: "Pricing" },
   { href: "/blog", label: "Blog" },
 ];
 

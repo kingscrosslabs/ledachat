@@ -37,7 +37,7 @@ faqs:
       moving simple keyword to link automations to LedaChat.
 relatedPages:
   - /#compare
-  - /#options
+  - /#pricing
   - /#mcp
 tags:
   - manychat vs ledachat
@@ -112,4 +112,4 @@ There's no import, but each automation takes a couple of minutes:
 3. Pause the ManyChat version before you take the LedaChat one live, so nobody gets two DMs.
 4. Test by commenting from a second account.
 
-The hosted version of LedaChat is opening soon. [Join the waitlist](/#options) to be first in, or self-host it today. If you're still comparing, [6 Best ManyChat Alternatives](/blog/manychat-alternatives) covers the other options too.
+The hosted version of LedaChat is opening soon. [Join the waitlist](/#pricing) to be first in, or self-host it today. If you're still comparing, [6 Best ManyChat Alternatives](/blog/manychat-alternatives) covers the other options too.

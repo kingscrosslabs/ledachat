@@ -1,4 +1,4 @@
-import { ArrowRight, AtSign, BarChart3, Bot, Check, ChevronDown, CirclePause, Download, FileCode2, KeyRound, Link2, Mail, MessageCircle, MessageSquareReply, MessagesSquare, MousePointerClick, Repeat2, Server, ShieldCheck, Shuffle, Smartphone, UserCheck, X } from "lucide-react";
+import { ArrowRight, AtSign, BarChart3, Bot, Check, ChevronDown, CirclePause, Download, FileCode2, KeyRound, Link2, Mail, MessageCircle, MessageSquareReply, MessagesSquare, MousePointerClick, Repeat2, Server, Send, ShieldCheck, Shuffle, Smartphone, UserCheck, X } from "lucide-react";
 import type { IconType } from "react-icons";
 import { AiFillOpenAI } from "react-icons/ai";
 import { RiGrokAiFill } from "react-icons/ri";
@@ -185,6 +185,7 @@ const FEATURES = [
   { icon: Link2, title: "Link delivery" },
   { icon: Mail, title: "Email capture" },
   { icon: Download, title: "Lead export to CSV" },
+  { icon: Send, title: "Leads to Email Provider" },
   { icon: Smartphone, title: "Live phone preview" },
   { icon: UserCheck, title: "Once per person" },
   { icon: BarChart3, title: "Stats and tap tracking" },
@@ -222,6 +223,7 @@ const COMPARISON: Array<{ label: string; adeli: Cell; manychat: Cell }> = [
   { label: "Comment to DM on Instagram", adeli: true, manychat: true },
   { label: "Story replies", adeli: true, manychat: true },
   { label: "Email capture", adeli: true, manychat: true },
+  { label: "Push email to Email Provider (e.g. Klaviyo, Loops, etc.)", adeli: true, manychat: false },
 ];
 
 function CellValue({ value }: { value: Cell }) {
@@ -317,8 +319,8 @@ function Options() {
     },
   ];
   return (
-    <Section id="options">
-      <SectionHeading title="Options" lead="Use the hosted version, or run your own copy." />
+    <Section id="pricing">
+      <SectionHeading title="Pricing" lead="Use the hosted version, or run your own copy." />
       <div className="grid gap-4 md:grid-cols-3">
         {options.map((option) => (
           <div key={option.name} className={cn("flex flex-col rounded-xl border bg-card p-5", HOVER_BORDER, option.featured && "border-2 border-highlight")}>
