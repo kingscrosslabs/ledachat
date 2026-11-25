@@ -37,6 +37,9 @@ export default function sitemap(): MetadataRoute.Sitemap {
   return [
     { url: siteUrl(), ...(lastModified ? { lastModified } : {}) },
     { url: `${siteUrl()}/blog`, ...(posts[0] ? { lastModified: posts[0].lastModified } : {}) },
+    { url: `${siteUrl()}/docs/mcp` },
+    { url: `${siteUrl()}/privacy-policy` },
+    { url: `${siteUrl()}/terms` },
     ...posts.map((post) => ({ url: `${siteUrl()}${post.path}`, lastModified: post.lastModified })),
   ];
 }

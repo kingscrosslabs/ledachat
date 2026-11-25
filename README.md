@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/kingscrosslabs/adeli-chat/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/kingscrosslabs/adeli-chat/ci.yml?branch=main&label=CI" alt="CI status" /></a>
-  <a href="https://github.com/kingscrosslabs/adeli-chat/blob/main/LICENSE"><img src="https://img.shields.io/github/license/kingscrosslabs/adeli-chat?color=702EC7" alt="MIT license" /></a>
-  <img src="https://img.shields.io/github/package-json/v/kingscrosslabs/adeli-chat?color=702EC7&label=version" alt="LedaChat version" />
+  <a href="https://github.com/kingscrosslabs/ledachat/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/kingscrosslabs/ledachat/ci.yml?branch=main&label=CI" alt="CI status" /></a>
+  <a href="https://github.com/kingscrosslabs/ledachat/blob/main/LICENSE"><img src="https://img.shields.io/github/license/kingscrosslabs/ledachat?color=702EC7" alt="MIT license" /></a>
+  <img src="https://img.shields.io/github/package-json/v/kingscrosslabs/ledachat?color=702EC7&label=version" alt="LedaChat version" />
   <img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkingscrosslabs%2Fadeli-chat%2Fmain%2Fpackage.json&query=%24.engines.node&label=node&color=339933&logo=nodedotjs&logoColor=white" alt="Node.js version" />
   <a href="https://www.npmjs.com/package/@adeli/sdk"><img src="https://img.shields.io/npm/v/@adeli/sdk?label=%40adeli%2Fsdk&color=0a807a" alt="@adeli/sdk on npm" /></a>
   <a href="https://www.tryadeli.com"><img src="https://img.shields.io/badge/powered%20by-Adeli-0a807a" alt="Powered by Adeli" /></a>
@@ -102,7 +102,9 @@ One LedaChat install uses one Adeli organization, through the API key in `ADELI_
 | `STRIPE_WEBHOOK_SECRET` | No | Hosted only, with `STRIPE_SECRET_KEY`: the signing secret of the `https://<app>/api/stripe/webhook` endpoint. |
 | `SLACK_BILLING_ALERT_WEBHOOK_URL` | No | Slack incoming webhook for billing alerts. Empty: none are sent. |
 | `SLACK_SIGNUP_WEBHOOK_URL` | No | Slack incoming webhook for sign-ups and automations going live. Empty: none are sent. |
+| `LOOPS_API_KEY` | No | Loops API key for the welcome email on sign-up. Empty: no email is sent. See [docs/email.md](docs/email.md). |
 | `NEXT_PUBLIC_POSTHOG_UI_HOST` | No | `https://us.posthog.com` (default) or `https://eu.posthog.com`, for links from the toolbar. |
+| `GTM_ID` | No | Google Tag Manager container ID (`GTM-XXXXXXX`), loaded on every page. Empty: no tag. See [docs/analytics.md](docs/analytics.md). |
 
 The Adeli API key stays on the server. It's never sent to the browser, and nobody enters a key in the app.
 
@@ -110,18 +112,25 @@ Google sign-in only works on domains registered in the OAuth client, so preview 
 
 ### Landing page (optional)
 
-Self-hosting needs only the app. The marketing site in `apps/landing-page` is a second Vercel project: Root Directory `apps/landing-page`, Ignored Build Step `sh scripts/vercel-ignored-build-step.sh`, and `APP_URL` set to the app's address (for example `https://app.example.com`), which its sign-in links point to. A production build without `APP_URL` fails.
+Self-hosting needs only the app. The marketing site in `apps/landing-page` is a second Vercel project: Root Directory `apps/landing-page`, Ignored Build Step `sh scripts/vercel-ignored-build-step.sh`, and `APP_URL` set to the app's address (for example `https://app.example.com`), which its sign-in links point to. A production build without `APP_URL` fails. Set `GTM_ID` there too to load Google Tag Manager on the marketing site.
 
 To test the whole flow against a local Adeli dev server, with a real comment triggering a real DM, follow [docs/local-development.md](docs/local-development.md).
 
 ## Use with Claude (MCP)
+
+[![LedaChat MCP connector – tool definition quality and endpoint health on Glama](https://glama.ai/mcp/connectors/com.ledachat.app/leda-chat-mcp/badges/score.svg)](https://glama.ai/mcp/connectors/com.ledachat.app/leda-chat-mcp)
 
 LedaChat is also an MCP server at `https://<your-domain>/mcp`, so Claude can list, create and manage your automations: "make a Comment to DM automation for my latest reel that sends the GUIDE link", "pause everything on that post", "how did last week's automations do".
 
 Open **Connect to AI Agent** in the app sidebar (`/mcp-apis`). It has a setup guide for Claude, ChatGPT (and Codex), Cursor, Perplexity and any other MCP client, with your URL filled in.
 
 - **Claude, ChatGPT, Cursor and Perplexity** sign in with Google (OAuth) and ask what they may do. Turn off "changes" for a read-only connection. Disconnect any of them under **Connected apps**. This needs Google sign-in, so it's off in local no-login mode.
-- **Claude Code:**
+- **Claude Code plugin** (hosted LedaChat): this repo is also a plugin marketplace. In Claude Code, run
+  ```
+  /plugin install ledachat --marketplace kingscrosslabs/ledachat
+  ```
+  (or `/plugin marketplace add kingscrosslabs/ledachat`, then `/plugin install ledachat@ledachat`), then type `/mcp` and choose Authenticate. The plugin lives in `plugins/ledachat`.
+- **Claude Code** (any install):
   ```bash
   claude mcp add --transport http ledachat https://<your-domain>/mcp
   ```
@@ -130,7 +139,9 @@ Open **Connect to AI Agent** in the app sidebar (`/mcp-apis`). It has a setup gu
 
 API tokens start with `adc_`. Every user gets a **Default** token, and you can create more that are read only or expire after 30, 90 or 365 days. Tokens are stored as a hash plus an encrypted copy, so you can reveal and copy them again later, as with Adeli's API keys. Tokens created before that stay hidden. A token or connection only reaches your own automations.
 
-Tools: `get_workspace`, `list_automations`, `get_automation`, `list_posts`, `create_automation` (always a draft), `update_automation`, `go_live`, `pause_automation`, `duplicate_automation`, `delete_automation`, `reset_runs`, `list_audience` (who engages the most, across automations or for one). They use the same validation as the editor, so an automation Claude takes live passes the same checks.
+A new user can start from their agent: after signing in, every tool answers with a `setup` block until Instagram is connected, and `connect_instagram` gives them a one-time link (single use, 15 minutes) that opens LedaChat signed in to **Continue with Instagram**. Clients that support URL elicitation show it as a prompt.
+
+Tools: `get_workspace`, `connect_instagram`, `list_automations`, `get_automation`, `list_posts`, `create_automation` (always a draft), `update_automation`, `go_live`, `pause_automation`, `duplicate_automation`, `delete_automation`, `reset_runs`, `retry_run` (send a failed Opening DM again), `list_audience` (who engages the most, across automations or for one). They use the same validation as the editor, so an automation Claude takes live passes the same checks.
 
 ## Get your Adeli API key
 

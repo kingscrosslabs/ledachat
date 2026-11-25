@@ -4,6 +4,7 @@ import { and, asc, count, desc, eq, inArray, max, min, sql } from "drizzle-orm";
 
 import { STAGE_LABELS, type RunStage } from "@/lib/audience-stages";
 import { db, schema } from "@/lib/db";
+import { retryRefusal } from "@/lib/runtime/handle";
 
 export { STAGE_LABELS, type RunStage };
 
@@ -36,6 +37,8 @@ export type AutomationPerson = {
   source: "live" | "earlier";
   email: string | null;
   triggeredAt: string;
+  /** Their Opening DM failed and Instagram still allows sending it again (Retry). */
+  canRetry: boolean;
 };
 
 /** One automation a person triggered, for their contact detail. */
@@ -109,10 +112,13 @@ export async function listAudience(accountId: string): Promise<AudienceContact[]
 
 /** Everyone who triggered one automation, newest first. Empty when it isn't the account's. */
 export async function listAutomationPeople(accountId: string, automationId: string): Promise<AutomationPerson[]> {
-  const ids = await ownAutomationIds(accountId, automationId);
-  if (!ids.length) return [];
-  const { runs } = schema;
+  const { runs, automations } = schema;
+  const [automation] = await db().select({ type: automations.type }).from(automations)
+    .where(and(eq(automations.accountId, accountId), eq(automations.id, automationId)));
+  if (!automation) return [];
+  const ids = [automationId];
   const rows = await db().select().from(runs).where(eq(runs.automationId, automationId)).orderBy(desc(runs.createdAt)).limit(AUDIENCE_LIMIT);
+  const now = new Date();
   const { byRun } = await emailsFor(ids, rows.map((row) => row.igUserId));
   return rows.map((row) => ({
     igUserId: row.igUserId,
@@ -122,6 +128,7 @@ export async function listAutomationPeople(accountId: string, automationId: stri
     source: row.source,
     email: byRun.get(`${automationId}:${row.igUserId}`) ?? null,
     triggeredAt: row.createdAt.toISOString(),
+    canRetry: retryRefusal(row, automation.type, now) === null,
   }));
 }
 
@@ -134,6 +141,7 @@ export async function listContactRuns(accountId: string, igUserId: string): Prom
     .orderBy(desc(runs.createdAt));
   if (!rows.length) return [];
   const { byRun } = await emailsFor(rows.map((row) => row.run.automationId), [igUserId]);
+  const now = new Date();
   return rows.map(({ run, automationName, automationType }) => ({
     automationId: run.automationId,
     automationName,
@@ -145,6 +153,7 @@ export async function listContactRuns(accountId: string, igUserId: string): Prom
     source: run.source,
     email: byRun.get(`${run.automationId}:${igUserId}`) ?? null,
     triggeredAt: run.createdAt.toISOString(),
+    canRetry: retryRefusal(run, automationType, now) === null,
   }));
 }
 

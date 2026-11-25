@@ -1,5 +1,5 @@
 {
-  "id": "057c2944-99d8-4e7c-91f1-b95de52a59ac",
+  "id": "d493f8db-c3b5-4f8e-abf2-1fb6b884ca90",
   "prevId": "f6190e5b-fff8-404a-aeb0-f16352b3f5f8",
   "version": "7",
   "dialect": "postgresql",
@@ -830,8 +830,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.email_connections": {
-      "name": "email_connections",
+    "public.connect_links": {
+      "name": "connect_links",
       "schema": "",
       "columns": {
         "id": {
@@ -846,27 +846,26 @@
           "primaryKey": false,
           "notNull": true
         },
-        "provider": {
-          "name": "provider",
+        "code_hash": {
+          "name": "code_hash",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "secret": {
-          "name": "secret",
+        "method": {
+          "name": "method",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
         },
-        "blocked": {
-          "name": "blocked",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "last_synced_at": {
-          "name": "last_synced_at",
+        "used_at": {
+          "name": "used_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -877,20 +876,29 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "connect_links_user_idx": {
+          "name": "connect_links_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
-        "email_connections_user_id_auth_user_id_fk": {
-          "name": "email_connections_user_id_auth_user_id_fk",
-          "tableFrom": "email_connections",
+        "connect_links_user_id_auth_user_id_fk": {
+          "name": "connect_links_user_id_auth_user_id_fk",
+          "tableFrom": "connect_links",
           "tableTo": "auth_user",
           "columnsFrom": [
             "user_id"
@@ -904,129 +912,11 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "email_connections_user_provider": {
-          "name": "email_connections_user_provider",
+        "connect_links_code_hash_unique": {
+          "name": "connect_links_code_hash_unique",
           "nullsNotDistinct": false,
           "columns": [
-            "user_id",
-            "provider"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.email_sync_jobs": {
-      "name": "email_sync_jobs",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "connection_id": {
-          "name": "connection_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "email": {
-          "name": "email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "attempts": {
-          "name": "attempts",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "next_attempt_at": {
-          "name": "next_attempt_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "error": {
-          "name": "error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "email_sync_due": {
-          "name": "email_sync_due",
-          "columns": [
-            {
-              "expression": "state",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "next_attempt_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "email_sync_jobs_connection_id_email_connections_id_fk": {
-          "name": "email_sync_jobs_connection_id_email_connections_id_fk",
-          "tableFrom": "email_sync_jobs",
-          "tableTo": "email_connections",
-          "columnsFrom": [
-            "connection_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "email_sync_connection_email": {
-          "name": "email_sync_connection_email",
-          "nullsNotDistinct": false,
-          "columns": [
-            "connection_id",
-            "email"
+            "code_hash"
           ]
         }
       },

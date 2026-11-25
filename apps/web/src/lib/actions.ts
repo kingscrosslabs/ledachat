@@ -5,12 +5,13 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { deleteUserAccount } from "@/lib/account";
 import { listInstagramAccounts } from "@/lib/adeli/instagram";
 import { renameLocalProfile as renameProfile } from "@/lib/adeli/profile";
 import { AdeliError } from "@/lib/adeli/types";
 import { trackWentLive } from "@/lib/analytics/automations";
-import { listContactRuns, type ContactRun } from "@/lib/audience";
-import { track } from "@/lib/analytics/server";
+import { listContactRuns, type ContactRun, type RunStage } from "@/lib/audience";
+import { track, type Source } from "@/lib/analytics/server";
 import { authEnabled, googleCredentials } from "@/lib/auth/config";
 import { auth } from "@/lib/auth/server";
 import { getCurrentUser, requireUserId, SignedOutError } from "@/lib/auth/session";
@@ -84,6 +85,26 @@ export async function signOut(): Promise<void> {
 }
 
 /**
+ * Deletes the signed-in user's account and everything LedaChat keeps for
+ * them, then signs them out. Refused while Instagram is connected or Pro is
+ * active (`deleteUserAccount`). Signing up again starts a new account.
+ */
+export async function deleteAccount(): Promise<ActionResult> {
+  const result = await guard(async (userId) => {
+    if (!authEnabled()) throw new ActionError("Deleting your account needs sign-in, which is off on this server.");
+    const user = await getCurrentUser();
+    if (!user) throw new SignedOutError();
+    await deleteUserAccount(user);
+    track(userId, "account_deleted");
+    return { ok: true };
+  });
+  if (!result.ok) return result;
+  // The session row went with the user; this clears the cookie.
+  await auth().api.signOut({ headers: await headers() }).catch(() => undefined);
+  redirect("/sign-in");
+}
+
+/**
  * "Upgrade to Pro": Stripe Checkout, or the Customer Portal when the user
  * already pays. The payer is the signed-in user, never anyone the browser names.
  */
@@ -128,8 +149,9 @@ export async function renameLocalProfile(name: string): Promise<ActionResult<{ p
 /**
  * Saves the account chosen or just connected on `/connect`, after checking
  * it's on the user's own Adeli profile, and registers their webhook.
+ * `source` is "mcp" when `/connect` was opened from an agent's link.
  */
-export async function connectAccount(adeliAccountId: string): Promise<ActionResult<{ handle: string }>> {
+export async function connectAccount(adeliAccountId: string, source: Source = "app"): Promise<ActionResult<{ handle: string }>> {
   return guard(async (userId) => {
     const account = (await listInstagramAccounts(userId)).find((item) => item.accountId === adeliAccountId);
     if (!account) throw new ActionError("That Instagram account isn't connected to your profile. Refresh and try again.");
@@ -162,7 +184,7 @@ export async function connectAccount(adeliAccountId: string): Promise<ActionResu
     });
     // Comments on the account only reach LedaChat through the user's webhook.
     await ensureAdeliWebhook(userId).catch((error: unknown) => console.warn(`Couldn't register the Adeli webhook: ${error instanceof Error ? error.message : String(error)}`));
-    track(userId, "instagram_account_connected", { reconnected });
+    track(userId, "instagram_account_connected", { reconnected, source: source === "mcp" ? "mcp" : "app" });
     return done({ handle: account.displayIdentifier });
   });
 }
@@ -255,6 +277,15 @@ export async function previewEarlierComments(id: string): Promise<ActionResult<s
 /** Every automation one person in the Audience triggered, for their contact detail. Reads only the user's own account. */
 export async function getContactRuns(igUserId: string): Promise<ActionResult<{ runs: ContactRun[] }>> {
   return guard(async (userId) => ({ ok: true, runs: await listContactRuns((await requireAccount(userId)).id, igUserId) }));
+}
+
+/** Sends one person's failed Opening DM again, from the Audience. */
+export async function retryRun(id: string, igUserId: string): Promise<ActionResult<{ stage: RunStage }>> {
+  return guard(async (userId) => {
+    const result = await service.retryRun(userId, id, igUserId);
+    track(userId, "run_retried", { automation_id: id, ok: result.ok, source: "app" });
+    return result.ok ? done(result) : result;
+  });
 }
 
 /** Sends the flow to people who commented on the post in the last day, before it went live. */

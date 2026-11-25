@@ -3,12 +3,15 @@ import "server-only";
 import { and, asc, count, eq, ne, sql } from "drizzle-orm";
 import { after } from "next/server";
 
+import { missingGrantsFor, missingGrantsMessage } from "@/lib/adeli/instagram";
 import { alertWentLive } from "@/lib/alerts/dopamine";
 import { trackError, type Source } from "@/lib/analytics/server";
 import { appUrl } from "@/lib/app-url";
+import { stageOf, type RunStage } from "@/lib/audience";
 import { getPlan, liveAutomationLimit } from "@/lib/billing/state";
 import { getAutomation, getConnectedAccount, otherLiveAutomations, type ConnectedAccount } from "@/lib/data";
 import { db, schema } from "@/lib/db";
+import { retryOpeningDm, retryRefusal } from "@/lib/runtime/handle";
 import { EARLIER_SEND_LIMIT, EARLIER_WINDOW_HOURS, findEarlierComments, sendEarlierComments, type EarlierComments } from "@/lib/runtime/earlier";
 
 import { defaultAutomationContent } from "@adeli-chat/ui/automation/defaults";
@@ -33,9 +36,31 @@ export type ActionResult<T = object> =
 /** A problem the user can fix, shown to them as is. */
 export class ServiceError extends Error {}
 
+/** What an empty workspace needs next. MCP tools return it as `setup`; the agent calls `connect_instagram`. Never a URL. */
+export type Setup = { next: "connect_instagram"; message: string; tool: "connect_instagram" };
+
+export const CONNECT_INSTAGRAM_SETUP: Setup = { next: "connect_instagram", message: "Connect an Instagram professional account to continue.", tool: "connect_instagram" };
+
+/**
+ * The workspace has no Instagram account yet. A `ServiceError`, so Server
+ * Actions show its message as before; MCP tools turn it into a normal result
+ * with `setup` (never an auth error, which would restart OAuth).
+ */
+export class SetupRequired extends ServiceError {
+  readonly setup: Setup = CONNECT_INSTAGRAM_SETUP;
+  constructor() {
+    super("Connect an Instagram account first.");
+  }
+}
+
+/** Null once an Instagram account is connected, otherwise what to do next. */
+export async function setupState(userId: string): Promise<Setup | null> {
+  return (await getConnectedAccount(userId)) ? null : CONNECT_INSTAGRAM_SETUP;
+}
+
 export async function requireAccount(userId: string): Promise<ConnectedAccount> {
   const account = await getConnectedAccount(userId);
-  if (!account) throw new ServiceError("Connect an Instagram account first.");
+  if (!account) throw new SetupRequired();
   return account;
 }
 
@@ -126,6 +151,9 @@ export async function goLive(userId: string, id: string, input?: unknown, source
   const rejected = await checkLive(account.id, id, content);
   if (rejected) return rejected;
   const wasLive = automation.status === "live";
+  // A connection without comments or DMs (someone unticked them on Facebook Login) would go live and do nothing.
+  const missing = wasLive ? [] : await missingGrantsFor(userId, account.accountId);
+  if (missing.length) return { ok: false, reason: "error", message: `${missingGrantsMessage(missing)} (${appUrl()}/connect)` };
   const limit = wasLive ? null : liveAutomationLimit(await getPlan(userId));
   const now = new Date();
   const { name, commentReply, openingDm, emailCapture, followGate, finalDm } = content;
@@ -184,6 +212,27 @@ export async function resetRuns(userId: string, id: string): Promise<{ count: nu
   await loadOwn(userId, id);
   const deleted = await db().delete(schema.runs).where(eq(schema.runs.automationId, id)).returning({ id: schema.runs.id });
   return { count: deleted.length };
+}
+
+/**
+ * Sends the Opening DM again to one person whose Opening DM failed (an
+ * Instagram error or rate limit), on any automation status: a paused one
+ * still finishes flows it started. `stage` is where they are now; when
+ * Instagram refuses again the result is an error with its reason.
+ */
+export async function retryRun(userId: string, id: string, igUserId: string): Promise<ActionResult<{ stage: RunStage }>> {
+  const { account, automation } = await loadOwn(userId, id);
+  const [run] = await db().select().from(schema.runs).where(and(eq(schema.runs.automationId, automation.id), eq(schema.runs.igUserId, igUserId)));
+  if (!run) throw new ServiceError("This person isn't in this automation any more.");
+  const refusal = retryRefusal(run, automation.type);
+  if (refusal) throw new ServiceError(refusal);
+  const after = await retryOpeningDm(userId, account.accountId, automation, run.id);
+  if (!after) throw new ServiceError("Their Opening DM is already being sent again.");
+  if (after.state === "failed") {
+    const reason = after.error?.replace(/^[a-z_]+: /, "") ?? "Instagram refused it.";
+    return { ok: false, reason: "error", message: `Instagram didn't accept the Opening DM again. ${reason}` };
+  }
+  return { ok: true, stage: stageOf(after.state) };
 }
 
 export type EarlierPreview = {

@@ -1,4 +1,5 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { fakeAdeli } from "../../../test/fake-adeli";
@@ -18,16 +19,32 @@ const POSTS = {
   ],
 };
 
+type ConnectOptions = {
+  /** Protocol 2026-07-28 (per-request capabilities, `input_required`) instead of the default 2025 handshake. */
+  modern?: boolean;
+  capabilities?: ConstructorParameters<typeof Client>[1] extends infer O ? O extends { capabilities?: infer C } ? C : never : never;
+  /** Every HTTP status `/mcp` answered a POST with (the GET stream is a 405 on our stateless server). */
+  statuses?: number[];
+};
+
 /** An MCP client whose HTTP goes straight to our `/mcp` handler. */
-async function connect(token: string) {
-  const client = new Client({ name: "test", version: "1.0.0" });
+async function connect(token: string, { modern = false, capabilities, statuses }: ConnectOptions = {}) {
+  const client = new Client({ name: "test", version: "1.0.0" }, { ...(capabilities ? { capabilities } : {}), ...(modern ? { versionNegotiation: { mode: "auto" as const } } : {}) });
   const transport = new StreamableHTTPClientTransport(new URL(MCP_URL), {
-    fetch: (input, init) => handleMcpRequest(new Request(input, init)),
+    fetch: async (input, init) => {
+      const request = new Request(input, init);
+      const response = await handleMcpRequest(request);
+      if (request.method === "POST") statuses?.push(response.status);
+      return response;
+    },
     requestInit: { headers: { Authorization: `Bearer ${token}` } },
   });
   await client.connect(transport);
   return client;
 }
+
+const SETUP = { next: "connect_instagram", message: "Connect an Instagram professional account to continue.", tool: "connect_instagram" };
+const CONNECT_LINK = /^http:\/\/localhost:3030\/connect\/start\/[A-Za-z0-9_-]{43}$/;
 
 const STORY_AT = new Date(Date.now() - 60 * 60 * 1000).toISOString();
 const STORIES = {
@@ -70,6 +87,8 @@ describe("/mcp authentication", () => {
     const response = await handleMcpRequest(new Request(MCP_URL, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) }));
     expect(response.status).toBe(401);
     expect(response.headers.get("www-authenticate")).toContain("resource_metadata=");
+    // Asking for offline_access is what gets a client a refresh token, so it doesn't have to sign in again every hour.
+    expect(response.headers.get("www-authenticate")).toContain('scope="automations:read automations:write offline_access"');
   });
 
   it("rejects unknown, revoked and expired API tokens", async () => {
@@ -91,10 +110,16 @@ describe("/mcp tools", () => {
     const client = await connect(token);
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
-      "create_automation", "delete_automation", "duplicate_automation", "get_automation", "get_workspace",
-      "go_live", "list_audience", "list_automations", "list_posts", "list_stories", "message_earlier_comments", "pause_automation", "reset_runs", "update_automation",
+      "connect_instagram", "create_automation", "delete_automation", "duplicate_automation", "get_automation", "get_workspace",
+      "go_live", "list_audience", "list_automations", "list_posts", "list_stories", "message_earlier_comments", "pause_automation", "reset_runs", "retry_run", "update_automation",
     ]);
     expect(tools.find((tool) => tool.name === "delete_automation")?.annotations?.destructiveHint).toBe(true);
+    // AI directories (Claude, ChatGPT) review these: every tool says whether it only reads, and every write whether it's destructive.
+    for (const tool of tools) {
+      expect(tool.annotations?.readOnlyHint, tool.name).toBeTypeOf("boolean");
+      if (!tool.annotations?.readOnlyHint) expect(tool.annotations?.destructiveHint, tool.name).toBeTypeOf("boolean");
+      expect(tool.title, tool.name).toBeTruthy();
+    }
   });
 
   it("creates a draft, fills it in and takes it live", async () => {
@@ -119,12 +144,34 @@ describe("/mcp tools", () => {
     expect(live.status).toBe("live");
 
     const listed = data(await client.callTool({ name: "list_automations", arguments: { status: "live" } }));
-    expect(listed.map((item: { id: string }) => item.id)).toEqual([created.id]);
-    expect(listed[0].url).toBe(`http://localhost:3030/automations/${created.id}`);
+    expect(listed.automations.map((item: { id: string }) => item.id)).toEqual([created.id]);
+    expect(listed).not.toHaveProperty("next");
+    expect(listed.automations[0].url).toBe(`http://localhost:3030/automations/${created.id}`);
 
     expect(data(await client.callTool({ name: "pause_automation", arguments: { id: created.id } })).status).toBe("paused");
     expect(data(await client.callTool({ name: "delete_automation", arguments: { id: created.id } })).deleted).toBe(true);
-    expect(data(await client.callTool({ name: "list_automations", arguments: {} }))).toEqual([]);
+    expect(data(await client.callTool({ name: "list_automations", arguments: {} })).automations).toEqual([]);
+  });
+
+  it("tells an agent on a freshly connected account what to do next, without repeating the handle as a name", async () => {
+    const account = await seedAccount("user_1");
+    await db().update(schema.accounts).set({ displayName: "@birds" }).where(eq(schema.accounts.id, account.id));
+    const { token } = await createToken("user_1", { name: "test", readOnly: true, expiry: "never" });
+    const client = await connect(token);
+
+    const listed = data(await client.callTool({ name: "list_automations", arguments: {} }));
+    expect(listed).toEqual({ automations: [], automationsUrl: "http://localhost:3030/automations", next: expect.stringContaining("create_automation") });
+    expect(listed.next).not.toContain("\u2014");
+
+    const workspace = data(await client.callTool({ name: "get_workspace", arguments: {} }));
+    expect(workspace.instagram).toEqual({ handle: "@birds" });
+  });
+
+  it("keeps a real Instagram display name next to the handle", async () => {
+    await seedAccount("user_1");
+    const { token } = await createToken("user_1", { name: "test", readOnly: true, expiry: "never" });
+    const client = await connect(token);
+    expect(data(await client.callTool({ name: "get_workspace", arguments: {} })).instagram).toEqual({ handle: "@birds", name: "Birds" });
   });
 
   it("lists the audience, and one automation's people", async () => {
@@ -166,7 +213,7 @@ describe("/mcp tools", () => {
     const missing = await client.callTool({ name: "create_automation", arguments: { type: "story_reply", storyId: "story_gone" } });
     expect(missing.isError).toBe(true);
     expect(text(missing)).toContain("Use list_stories");
-    expect(data(await client.callTool({ name: "list_automations", arguments: {} }))).toEqual([]);
+    expect(data(await client.callTool({ name: "list_automations", arguments: {} })).automations).toEqual([]);
 
     const wrongType = await client.callTool({ name: "create_automation", arguments: { storyId: "story_1" } });
     expect(wrongType.isError).toBe(true);
@@ -183,6 +230,27 @@ describe("/mcp tools", () => {
     expect(result.isError).toBe(true);
     expect(text(result)).toContain("trigger.mediaId");
     expect(text(result)).toContain("trigger.keywords");
+  });
+
+  it("won't go live when Instagram didn't grant DMs, and get_workspace says so", async () => {
+    await seedAccount("user_1");
+    fakeAdeli([
+      (sent) => (sent.method === "GET" && sent.path === "/posts" ? { status: 200, body: POSTS } : undefined),
+      (sent) => (sent.method === "GET" && sent.path === "/accounts" ? { status: 200, body: { status: "complete", accounts: [{
+        accountId: "acc_1", profileId: "profile_1", platform: "instagram", providerId: "ig_self", displayName: "Birds", displayIdentifier: "birds", connectionStatus: "connected",
+        capabilities: { "comments.read": true, "comments.manage": true, "inbox.read": false, "inbox.send": false },
+      }] } } : undefined),
+    ]);
+    const { token } = await createToken("user_1", { name: "test", readOnly: false, expiry: "never" });
+    const client = await connect(token);
+    const created = data(await client.callTool({ name: "create_automation", arguments: { name: "Guide", postId: "media_1", keywords: ["guide"], linkUrl: "https://example.com/guide" } }));
+
+    const result = await client.callTool({ name: "go_live", arguments: { id: created.id } });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain("Instagram didn't let LedaChat send DMs");
+
+    const workspace = data(await client.callTool({ name: "get_workspace", arguments: {} }));
+    expect(workspace.instagram).toMatchObject({ handle: "@birds", missingPermissions: ["send DMs"] });
   });
 
   it("refuses to go live over another live automation's keyword", async () => {
@@ -219,7 +287,7 @@ describe("/mcp tools", () => {
     const client = await connect(token);
     const result = await client.callTool({ name: "create_automation", arguments: { postId: "media_404" } });
     expect(result.isError).toBe(true);
-    expect(data(await client.callTool({ name: "list_automations", arguments: {} }))).toEqual([]);
+    expect(data(await client.callTool({ name: "list_automations", arguments: {} })).automations).toEqual([]);
   });
 
   it("only allows reading with a read-only token", async () => {
@@ -241,18 +309,143 @@ describe("/mcp tools", () => {
     const { token } = await createToken("user_2", { name: "theirs", readOnly: false, expiry: "never" });
     const client = await connect(token);
 
-    expect(data(await client.callTool({ name: "list_automations", arguments: {} }))).toEqual([]);
+    expect(data(await client.callTool({ name: "list_automations", arguments: {} })).automations).toEqual([]);
     expect((await client.callTool({ name: "get_automation", arguments: { id: automation.id } })).isError).toBe(true);
     expect((await client.callTool({ name: "delete_automation", arguments: { id: automation.id } })).isError).toBe(true);
     expect((await client.callTool({ name: "update_automation", arguments: { id: automation.id, name: "Mine now" } })).isError).toBe(true);
   });
 
-  it("tells the client to connect Instagram first", async () => {
+});
+
+describe("/mcp on an empty workspace", () => {
+  it("answers every tool normally, with setup saying to call connect_instagram, never 401 or 403", async () => {
+    const { token } = await createToken("user_1", { name: "test", readOnly: false, expiry: "never" });
+    const statuses: number[] = [];
+    const client = await connect(token, { statuses });
+
+    const workspace = data(await client.callTool({ name: "get_workspace", arguments: {} }));
+    expect(workspace).toMatchObject({ instagram: null, setup: SETUP });
+    expect(workspace).not.toHaveProperty("setupNeeded");
+    expect(data(await client.callTool({ name: "list_automations", arguments: {} }))).toEqual({ automations: [], setup: SETUP });
+    expect(data(await client.callTool({ name: "list_automations", arguments: { status: "live" } }))).toEqual({ automations: [], setup: SETUP });
+    expect(data(await client.callTool({ name: "list_audience", arguments: {} }))).toMatchObject({ people: [], setup: SETUP });
+    expect(data(await client.callTool({ name: "list_audience", arguments: { automationId: "a_1" } }))).toMatchObject({ people: [], setup: SETUP });
+    expect(data(await client.callTool({ name: "get_automation", arguments: { id: "a_1" } }))).toEqual({ status: "setup_required", setup: SETUP });
+
+    const blocked: Array<[string, Record<string, unknown>]> = [
+      ["list_posts", {}], ["list_stories", {}],
+      ["create_automation", {}], ["create_automation", { type: "story_reply" }], ["update_automation", { id: "a_1", name: "x" }],
+      ["go_live", { id: "a_1" }], ["pause_automation", { id: "a_1" }], ["duplicate_automation", { id: "a_1" }],
+      ["delete_automation", { id: "a_1" }], ["reset_runs", { id: "a_1" }], ["retry_run", { id: "a_1", igUserId: "ig_1" }],
+      ["message_earlier_comments", { id: "a_1", send: false }], ["message_earlier_comments", { id: "a_1", send: true }],
+    ];
+    for (const [name, args] of blocked) {
+      const result = await client.callTool({ name, arguments: args });
+      expect(result.isError, name).toBe(true);
+      expect(JSON.parse(text(result)), name).toEqual({ status: "setup_required", setup: SETUP });
+    }
+
+    const link = data(await client.callTool({ name: "connect_instagram", arguments: {} }));
+    expect(link.url).toMatch(CONNECT_LINK);
+    expect(statuses.length).toBeGreaterThan(0);
+    expect(statuses.every((status) => status === 200 || status === 202)).toBe(true);
+    expect(await db().select().from(schema.automations)).toEqual([]);
+  });
+
+  it("says read only before setup on a read-only connection, and still answers reads", async () => {
+    const { token } = await createToken("user_1", { name: "reader", readOnly: true, expiry: "never" });
+    const client = await connect(token);
+    expect(text(await client.callTool({ name: "create_automation", arguments: {} }))).toContain("read only");
+    expect(data(await client.callTool({ name: "list_automations", arguments: {} }))).toEqual({ automations: [], setup: SETUP });
+  });
+});
+
+describe("connect_instagram", () => {
+  async function links() {
+    return db().select().from(schema.connectLinks);
+  }
+
+  it("returns a one-time link in the result when the client can't open URLs", async () => {
     const { token } = await createToken("user_1", { name: "test", readOnly: false, expiry: "never" });
     const client = await connect(token);
-    const workspace = data(await client.callTool({ name: "get_workspace", arguments: {} }));
-    expect(workspace.instagram).toBeNull();
-    expect(workspace.setupNeeded).toContain("Connect an Instagram account");
-    expect((await client.callTool({ name: "list_automations", arguments: {} })).isError).toBe(true);
+    const result = await client.callTool({ name: "connect_instagram", arguments: {} });
+    const body = data(result);
+    expect(body).toMatchObject({ instagram: null, expiresInMinutes: 15 });
+    expect(body.url).toMatch(CONNECT_LINK);
+    expect(body).not.toHaveProperty("elicitation");
+    const instruction = (result.content as Array<{ text: string }>)[1].text;
+    expect(instruction).toContain("Show the user this link");
+    expect(instruction).toContain(body.url);
+    const [row] = await links();
+    expect(row).toMatchObject({ userId: "user_1", method: null, usedAt: null });
+    expect(body.url).not.toContain(row.codeHash);
+  });
+
+  it("passes the login method to the link", async () => {
+    const { token } = await createToken("user_1", { name: "test", readOnly: false, expiry: "never" });
+    const client = await connect(token);
+    data(await client.callTool({ name: "connect_instagram", arguments: { method: "facebook" } }));
+    expect((await links())[0].method).toBe("facebook");
+  });
+
+  it("prompts with URL elicitation when the client declares it, and still returns the link", async () => {
+    const { token } = await createToken("user_1", { name: "test", readOnly: false, expiry: "never" });
+    const client = await connect(token, { modern: true, capabilities: { elicitation: { url: {} } } });
+    const prompts: Array<Record<string, unknown>> = [];
+    client.setRequestHandler("elicitation/create", async (request) => {
+      prompts.push(request.params as Record<string, unknown>);
+      return { action: "accept" };
+    });
+
+    const body = data(await client.callTool({ name: "connect_instagram", arguments: {} }));
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toMatchObject({ mode: "url", message: "Continue with Instagram to finish setting up LedaChat." });
+    expect(prompts[0].url).toMatch(CONNECT_LINK);
+    expect(body).toMatchObject({ url: prompts[0].url, instagram: null, expiresInMinutes: 15, elicitation: "accept" });
+    expect(await links()).toHaveLength(1);
+  });
+
+  it("returns the link even when the user declines the prompt", async () => {
+    const { token } = await createToken("user_1", { name: "test", readOnly: false, expiry: "never" });
+    const client = await connect(token, { modern: true, capabilities: { elicitation: { url: {} } } });
+    client.setRequestHandler("elicitation/create", async () => ({ action: "decline" }));
+    const body = data(await client.callTool({ name: "connect_instagram", arguments: {} }));
+    expect(body).toMatchObject({ elicitation: "decline" });
+    expect(body.url).toMatch(CONNECT_LINK);
+  });
+
+  it("doesn't elicit when a modern client only supports form elicitation", async () => {
+    const { token } = await createToken("user_1", { name: "test", readOnly: false, expiry: "never" });
+    const client = await connect(token, { modern: true, capabilities: { elicitation: { form: {} } } });
+    let prompted = false;
+    client.setRequestHandler("elicitation/create", async () => {
+      prompted = true;
+      return { action: "cancel" };
+    });
+    const body = data(await client.callTool({ name: "connect_instagram", arguments: {} }));
+    expect(prompted).toBe(false);
+    expect(body.url).toMatch(CONNECT_LINK);
+  });
+
+  it("works on a read-only connection", async () => {
+    const { token } = await createToken("user_1", { name: "reader", readOnly: true, expiry: "never" });
+    const client = await connect(token);
+    expect(data(await client.callTool({ name: "connect_instagram", arguments: {} })).url).toMatch(CONNECT_LINK);
+  });
+
+  it("gives no link when an account is already connected", async () => {
+    await seedAccount("user_1");
+    const { token } = await createToken("user_1", { name: "test", readOnly: false, expiry: "never" });
+    const client = await connect(token, { modern: true, capabilities: { elicitation: { url: {} } } });
+    let prompted = false;
+    client.setRequestHandler("elicitation/create", async () => {
+      prompted = true;
+      return { action: "accept" };
+    });
+    const body = data(await client.callTool({ name: "connect_instagram", arguments: {} }));
+    expect(body).toMatchObject({ url: null, instagram: "@birds" });
+    expect(prompted).toBe(false);
+    expect(await links()).toEqual([]);
+    expect(data(await client.callTool({ name: "get_workspace", arguments: {} }))).toMatchObject({ instagram: { handle: "@birds" }, setup: null });
   });
 });

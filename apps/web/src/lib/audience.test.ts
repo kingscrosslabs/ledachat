@@ -67,8 +67,8 @@ describe("listAutomationPeople", () => {
     const people = await listAutomationPeople(accountId, guide);
 
     expect(people).toEqual([
-      { igUserId: "ig_new", igUsername: "new", stage: "failed", commentText: null, source: "earlier", email: null, triggeredAt: "2026-11-03T00:00:00.000Z" },
-      { igUserId: "ig_fan", igUsername: "fan", stage: "tapped", commentText: "guide please", source: "live", email: "fan@example.com", triggeredAt: "2026-11-02T00:00:00.000Z" },
+      { igUserId: "ig_new", igUsername: "new", stage: "failed", commentText: null, source: "earlier", email: null, triggeredAt: "2026-11-03T00:00:00.000Z", canRetry: false },
+      { igUserId: "ig_fan", igUsername: "fan", stage: "tapped", commentText: "guide please", source: "live", email: "fan@example.com", triggeredAt: "2026-11-02T00:00:00.000Z", canRetry: false },
     ]);
   });
 });

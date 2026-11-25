@@ -13,10 +13,10 @@
 | Thing | Value |
 |---|---|
 | Product name | **LedaChat**, one word, capital L and C. Never "Leda Chat", "Ledachat" or "LEDACHAT" in prose. |
-| Marketing site | `https://ledachat.com` (`apps/landing-page`) |
+| Marketing site | `https://www.ledachat.com` (`apps/landing-page`; the bare domain redirects here) |
 | App | its own deployment (`apps/web`), linked from the site through `APP_URL` |
 | Support and feature requests | `hello@ledachat.com` |
-| Code identifiers | lowercase `ledachat` (MCP server name, theme storage key). The workspace packages stay `@adeli-chat/*` and the repo stays `kingscrosslabs/adeli-chat` until we rename them on purpose. |
+| Code identifiers | lowercase `ledachat` (MCP server name, theme storage key). The repo is `kingscrosslabs/ledachat` (renamed from `adeli-chat`; GitHub redirects the old name). The workspace packages stay `@adeli-chat/*` until we rename them on purpose. |
 
 LedaChat is built by King's Cross Labs and runs on the [Adeli](https://www.tryadeli.com/) API. Adeli is credited, not co-branded (section 6).
 
