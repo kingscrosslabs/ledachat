@@ -141,7 +141,7 @@ API tokens start with `adc_`. Every user gets a **Default** token, and you can c
 
 A new user can start from their agent: after signing in, every tool answers with a `setup` block until Instagram is connected, and `connect_instagram` gives them a one-time link (single use, 15 minutes) that opens LedaChat signed in to **Continue with Instagram**. Clients that support URL elicitation show it as a prompt.
 
-Tools: `get_workspace`, `connect_instagram`, `list_automations`, `get_automation`, `list_posts`, `create_automation` (always a draft), `update_automation`, `go_live`, `pause_automation`, `duplicate_automation`, `delete_automation`, `reset_runs`, `list_audience` (who engages the most, across automations or for one). They use the same validation as the editor, so an automation Claude takes live passes the same checks.
+Tools: `get_workspace`, `connect_instagram`, `list_automations`, `get_automation`, `list_posts`, `create_automation` (always a draft), `update_automation`, `go_live`, `pause_automation`, `duplicate_automation`, `delete_automation`, `reset_runs`, `retry_run` (send a failed Opening DM again), `list_audience` (who engages the most, across automations or for one). They use the same validation as the editor, so an automation Claude takes live passes the same checks.
 
 ## Get your Adeli API key
 

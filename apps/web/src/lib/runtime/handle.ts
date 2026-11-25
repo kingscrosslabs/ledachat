@@ -346,6 +346,51 @@ async function sendOpeningDm(userId: string, runId: string, automationId: string
 }
 
 /**
+ * How long Instagram lets an account start a DM with someone: a private reply
+ * to a comment within 7 days of it, and a DM after a story reply within the
+ * 24 hour messaging window it opened. Counted from when the run started.
+ */
+export const RETRY_WINDOW_MS = {
+  comment_to_dm: 7 * 24 * 60 * 60_000,
+  story_reply: 24 * 60 * 60_000,
+} as const;
+
+type RetryableRun = Pick<typeof schema.runs.$inferSelect, "state" | "openingSentAt" | "createdAt">;
+
+/**
+ * Why a run's Opening DM can't be sent again, or null when it can: only a run
+ * that failed before its Opening DM went out, while Instagram still allows it.
+ */
+export function retryRefusal(run: RetryableRun, type: Automation["type"], now = new Date()): string | null {
+  if (run.state !== "failed" || run.openingSentAt) return "Only someone whose Opening DM failed can be retried.";
+  if (now.getTime() - run.createdAt.getTime() > RETRY_WINDOW_MS[type]) {
+    return type === "story_reply"
+      ? "Instagram only allows a DM within 24 hours of their story reply."
+      : "Instagram only allows a DM within 7 days of their comment.";
+  }
+  return null;
+}
+
+/**
+ * Sends a failed run's Opening DM again, as the flow would have: a private
+ * reply to their comment, or a DM after their story reply. The public reply
+ * isn't sent again. Returns the run's state and error afterwards, or null
+ * when the run wasn't failed any more (another retry claimed it).
+ */
+export async function retryOpeningDm(userId: string, adeliAccountId: string, automation: Automation, runId: string) {
+  // The claim: only one retry gets the row back, and only while its Opening DM never went out.
+  const [run] = await db().update(schema.runs)
+    .set({ state: "matched", error: null, updatedAt: new Date() })
+    .where(and(eq(schema.runs.id, runId), eq(schema.runs.automationId, automation.id), eq(schema.runs.state, "failed"), isNull(schema.runs.openingSentAt)))
+    .returning();
+  if (!run) return null;
+  const recipient = automation.type === "story_reply" ? { id: run.igSenderId ?? run.igUserId } : { commentId: run.commentId };
+  await sendOpeningDm(userId, run.id, automation.id, adeliAccountId, recipient, automation.openingDm);
+  const [after] = await db().select({ state: schema.runs.state, error: schema.runs.error }).from(schema.runs).where(eq(schema.runs.id, run.id));
+  return after ?? null;
+}
+
+/**
  * Whether the person who tapped follows the account. Instagram answers now,
  * since a tap opens the conversation. If it can't say, they count as
  * following: a broken check shouldn't strand people who did follow. The

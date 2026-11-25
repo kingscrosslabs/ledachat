@@ -7,9 +7,11 @@ import { missingGrantsFor, missingGrantsMessage } from "@/lib/adeli/instagram";
 import { alertWentLive } from "@/lib/alerts/dopamine";
 import { trackError, type Source } from "@/lib/analytics/server";
 import { appUrl } from "@/lib/app-url";
+import { stageOf, type RunStage } from "@/lib/audience";
 import { getPlan, liveAutomationLimit } from "@/lib/billing/state";
 import { getAutomation, getConnectedAccount, otherLiveAutomations, type ConnectedAccount } from "@/lib/data";
 import { db, schema } from "@/lib/db";
+import { retryOpeningDm, retryRefusal } from "@/lib/runtime/handle";
 import { EARLIER_SEND_LIMIT, EARLIER_WINDOW_HOURS, findEarlierComments, sendEarlierComments, type EarlierComments } from "@/lib/runtime/earlier";
 
 import { defaultAutomationContent } from "@adeli-chat/ui/automation/defaults";
@@ -210,6 +212,27 @@ export async function resetRuns(userId: string, id: string): Promise<{ count: nu
   await loadOwn(userId, id);
   const deleted = await db().delete(schema.runs).where(eq(schema.runs.automationId, id)).returning({ id: schema.runs.id });
   return { count: deleted.length };
+}
+
+/**
+ * Sends the Opening DM again to one person whose Opening DM failed (an
+ * Instagram error or rate limit), on any automation status: a paused one
+ * still finishes flows it started. `stage` is where they are now; when
+ * Instagram refuses again the result is an error with its reason.
+ */
+export async function retryRun(userId: string, id: string, igUserId: string): Promise<ActionResult<{ stage: RunStage }>> {
+  const { account, automation } = await loadOwn(userId, id);
+  const [run] = await db().select().from(schema.runs).where(and(eq(schema.runs.automationId, automation.id), eq(schema.runs.igUserId, igUserId)));
+  if (!run) throw new ServiceError("This person isn't in this automation any more.");
+  const refusal = retryRefusal(run, automation.type);
+  if (refusal) throw new ServiceError(refusal);
+  const after = await retryOpeningDm(userId, account.accountId, automation, run.id);
+  if (!after) throw new ServiceError("Their Opening DM is already being sent again.");
+  if (after.state === "failed") {
+    const reason = after.error?.replace(/^[a-z_]+: /, "") ?? "Instagram refused it.";
+    return { ok: false, reason: "error", message: `Instagram didn't accept the Opening DM again. ${reason}` };
+  }
+  return { ok: true, stage: stageOf(after.state) };
 }
 
 export type EarlierPreview = {

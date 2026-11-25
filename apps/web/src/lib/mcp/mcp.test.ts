@@ -111,7 +111,7 @@ describe("/mcp tools", () => {
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "connect_instagram", "create_automation", "delete_automation", "duplicate_automation", "get_automation", "get_workspace",
-      "go_live", "list_audience", "list_automations", "list_posts", "list_stories", "message_earlier_comments", "pause_automation", "reset_runs", "update_automation",
+      "go_live", "list_audience", "list_automations", "list_posts", "list_stories", "message_earlier_comments", "pause_automation", "reset_runs", "retry_run", "update_automation",
     ]);
     expect(tools.find((tool) => tool.name === "delete_automation")?.annotations?.destructiveHint).toBe(true);
     // AI directories (Claude, ChatGPT) review these: every tool says whether it only reads, and every write whether it's destructive.
@@ -336,7 +336,7 @@ describe("/mcp on an empty workspace", () => {
       ["list_posts", {}], ["list_stories", {}],
       ["create_automation", {}], ["create_automation", { type: "story_reply" }], ["update_automation", { id: "a_1", name: "x" }],
       ["go_live", { id: "a_1" }], ["pause_automation", { id: "a_1" }], ["duplicate_automation", { id: "a_1" }],
-      ["delete_automation", { id: "a_1" }], ["reset_runs", { id: "a_1" }],
+      ["delete_automation", { id: "a_1" }], ["reset_runs", { id: "a_1" }], ["retry_run", { id: "a_1", igUserId: "ig_1" }],
       ["message_earlier_comments", { id: "a_1", send: false }], ["message_earlier_comments", { id: "a_1", send: true }],
     ];
     for (const [name, args] of blocked) {

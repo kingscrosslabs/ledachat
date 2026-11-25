@@ -42,6 +42,7 @@ const TOOLS: ReadonlyArray<{ name: string; kind: "Read" | "Write"; what: string 
   { name: "duplicate_automation", kind: "Write", what: "Copies an automation into a new draft." },
   { name: "delete_automation", kind: "Write", what: "Deletes an automation and its history. Can't be undone." },
   { name: "message_earlier_comments", kind: "Write", what: "Counts, then (once you agree) messages people who commented in the last 24 hours, before the automation went live." },
+  { name: "retry_run", kind: "Write", what: "Sends a failed Opening DM again to one person, within 7 days of their comment." },
   { name: "reset_runs", kind: "Write", what: "Forgets who an automation has messaged, so they can trigger it again. Handy for testing." },
 ];
 

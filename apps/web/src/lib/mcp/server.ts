@@ -479,6 +479,20 @@ export function createAdeliChatMcpServer(principal: McpPrincipal): McpServer {
     return json({ id, sent: send, people: result.count, matched: result.total, complete: result.complete, windowHours: result.windowHours, ...(result.allowed ? {} : { proRequired: true, upgradeUrl: result.upgradeUrl }) });
   }));
 
+  server.registerTool("retry_run", {
+    title: "Retry a failed Opening DM",
+    description: "Sends the Opening DM again to one person whose Opening DM failed (their stage in list_audience is failed and canRetry is true), for example after an Instagram rate limit. Instagram allows it within 7 days of their comment, or 24 hours of their story reply. The public reply isn't sent again. Returns their new stage, or why Instagram refused again.",
+    inputSchema: z.object({
+      id: z.string().describe("Automation id."),
+      igUserId: z.string().describe("The person's igUserId from list_audience."),
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, ({ id, igUserId }) => run("retry_run", "write", async () => {
+    const result = await service.retryRun(userId, id, igUserId);
+    track(userId, "run_retried", { automation_id: id, ok: result.ok, source: "mcp" });
+    return result.ok ? json({ id, igUserId, stage: result.stage }) : rejected(result);
+  }));
+
   server.registerTool("reset_runs", {
     title: "Reset runs",
     description: "Forgets everyone this automation has messaged, so the same people can trigger it again, and clears its stats. Handy when testing with your own account.",

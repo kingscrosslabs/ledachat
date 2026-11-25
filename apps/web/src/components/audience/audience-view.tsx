@@ -1,17 +1,18 @@
 "use client";
 
-import { Download, ExternalLink, Loader2, Search, Users } from "lucide-react";
+import { Download, ExternalLink, Loader2, RotateCcw, Search, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { toast } from "sonner";
 
 import { StagePill } from "@/components/audience/stage-pill";
 import { PageHeading } from "@/components/page-heading";
 import { Avatar, AvatarFallback } from "@adeli-chat/ui/components/avatar";
-import { buttonVariants } from "@adeli-chat/ui/components/button";
+import { Button, buttonVariants } from "@adeli-chat/ui/components/button";
 import { Input } from "@adeli-chat/ui/components/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@adeli-chat/ui/components/sheet";
-import { getContactRuns } from "@/lib/actions";
+import { getContactRuns, retryRun } from "@/lib/actions";
 import type { AudienceContact, AutomationPerson, ContactRun } from "@/lib/audience";
 import { compactNumber, relativeTime, shortDate } from "@/lib/format";
 
@@ -101,7 +102,7 @@ export function AudienceView({ automations, mode }: { automations: AutomationOpt
             { label: "Got the Final DM", value: mode.people.filter((person) => person.stage === "final_sent").length },
             { label: "Gave an email", value: mode.people.filter((person) => person.email).length },
           ]} />
-          <PeopleTable people={people} onOpen={setOpen} />
+          <PeopleTable automationId={mode.automationId} people={people} onOpen={setOpen} />
         </>
       )}
       {total > 0 && (mode.kind === "all" ? contacts.length : people.length) === 0 ? (
@@ -200,7 +201,39 @@ function ContactsTable({ contacts, onOpen }: { contacts: AudienceContact[]; onOp
   );
 }
 
-function PeopleTable({ people, onOpen }: { people: AutomationPerson[]; onOpen: (person: Person) => void }) {
+/** Sends a failed Opening DM again, then reloads the page's data. */
+function RetryButton({ automationId, person, onDone }: { automationId: string; person: Person; onDone?: () => void }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  return (
+    <Button
+      variant="outline"
+      size="xs"
+      disabled={pending}
+      aria-label={`Retry the Opening DM to ${handleOf(person)}`}
+      onClick={() => startTransition(async () => {
+        const result = await retryRun(automationId, person.igUserId);
+        if (result.ok) toast.success(`Sent the Opening DM to ${handleOf(person)}`);
+        else toast.error(result.reason === "error" ? result.message : "Something went wrong. Try again.");
+        router.refresh();
+        onDone?.();
+      })}
+    >
+      {pending ? <Loader2 className="animate-spin" /> : <RotateCcw />} Retry
+    </Button>
+  );
+}
+
+function StageCell({ automationId, person, onDone }: { automationId: string; person: AutomationPerson | ContactRun; onDone?: () => void }) {
+  return (
+    <span className="flex items-center gap-2">
+      <StagePill stage={person.stage} />
+      {person.canRetry ? <RetryButton automationId={automationId} person={person} onDone={onDone} /> : null}
+    </span>
+  );
+}
+
+function PeopleTable({ automationId, people, onOpen }: { automationId: string; people: AutomationPerson[]; onOpen: (person: Person) => void }) {
   if (!people.length) return null;
   return (
     <>
@@ -219,7 +252,7 @@ function PeopleTable({ people, onOpen }: { people: AutomationPerson[]; onOpen: (
             {people.map((person) => (
               <tr key={person.igUserId} className="transition-colors hover:bg-muted/40">
                 <td className="max-w-56 px-4 py-3"><PersonCell person={person} onOpen={onOpen} /></td>
-                <td className="px-4 py-3"><StagePill stage={person.stage} /></td>
+                <td className="px-4 py-3"><StageCell automationId={automationId} person={person} /></td>
                 <td className="max-w-64 truncate px-4 py-3 text-muted-foreground" title={person.commentText ?? undefined}>{person.commentText ?? ""}</td>
                 <td className="max-w-56 truncate px-4 py-3 text-muted-foreground">{person.email ?? ""}</td>
                 <td className="px-4 py-3 whitespace-nowrap text-muted-foreground">{relativeTime(person.triggeredAt)}{person.source === "earlier" ? " · earlier comment" : ""}</td>
@@ -233,7 +266,7 @@ function PeopleTable({ people, onOpen }: { people: AutomationPerson[]; onOpen: (
           <li key={person.igUserId} className="space-y-1.5 rounded-xl bg-card p-3 ring-1 ring-foreground/10">
             <div className="flex items-center justify-between gap-2">
               <PersonCell person={person} onOpen={onOpen} />
-              <StagePill stage={person.stage} />
+              <StageCell automationId={automationId} person={person} />
             </div>
             {person.commentText ? <p className="truncate text-xs text-muted-foreground">&ldquo;{person.commentText}&rdquo;</p> : null}
             <p className="text-xs text-muted-foreground">{relativeTime(person.triggeredAt)}{person.email ? ` · ${person.email}` : ""}</p>
@@ -248,6 +281,8 @@ function PeopleTable({ people, onOpen }: { people: AutomationPerson[]; onOpen: (
 function ContactSheet({ person, onClose }: { person: Person | null; onClose: () => void }) {
   // Keyed by person, so opening someone else shows loading until their runs arrive.
   const [loaded, setLoaded] = useState<{ igUserId: string; runs: ContactRun[] | null } | null>(null);
+  // Bumped after a retry, to read their runs again.
+  const [version, setVersion] = useState(0);
   const igUserId = person?.igUserId ?? null;
 
   useEffect(() => {
@@ -257,7 +292,7 @@ function ContactSheet({ person, onClose }: { person: Person | null; onClose: () 
       if (!cancelled) setLoaded({ igUserId, runs: result.ok ? result.runs : null });
     });
     return () => { cancelled = true; };
-  }, [igUserId]);
+  }, [igUserId, version]);
 
   const current = loaded && loaded.igUserId === igUserId ? loaded : null;
   const runs = current?.runs ?? null;
@@ -292,7 +327,7 @@ function ContactSheet({ person, onClose }: { person: Person | null; onClose: () 
                 <li key={run.automationId} className="space-y-2 rounded-xl bg-card p-3 ring-1 ring-foreground/10">
                   <div className="flex items-start justify-between gap-2">
                     <Link href={`/automations/${run.automationId}`} className="min-w-0 truncate text-sm font-medium hover:underline">{run.automationName || "Untitled automation"}</Link>
-                    <StagePill stage={run.stage} />
+                    <StageCell automationId={run.automationId} person={run} onDone={() => setVersion((value) => value + 1)} />
                   </div>
                   {run.commentText ? (
                     <p className="text-sm text-muted-foreground">
