@@ -10,6 +10,7 @@ import { AdeliError } from "@/lib/adeli/types";
 import { track } from "@/lib/analytics/server";
 import { emailCaptureOf, followGateOf, type Automation } from "@adeli-chat/ui/automation/schemas";
 import { snapshotOf } from "@/lib/automations/snapshot";
+import { pinThumbnail } from "@/lib/automations/thumbnail";
 import { toAutomation } from "@/lib/data";
 import { db, schema } from "@/lib/db";
 import { BRANDING_TEXT, showsBranding } from "@/lib/plan";
@@ -319,7 +320,7 @@ export async function bindNextPosts(userId: string, adeliAccountId: string, live
     if (!waiting.includes(automation)) return automation;
     const post = nextPostAfter(media, automation.liveAt);
     if (!post) return automation;
-    const trigger = { ...automation.trigger, mediaId: post.id, mediaSnapshot: snapshotOf(post) };
+    const trigger = await pinThumbnail({ ...automation.trigger, mediaId: post.id, mediaSnapshot: snapshotOf(post) });
     // Only while it's still waiting, so two comments arriving together bind it once.
     await db().update(schema.automations).set({ trigger, updatedAt: new Date() })
       .where(and(eq(schema.automations.id, automation.id), sql`${schema.automations.trigger}->>'mediaId' is null`));

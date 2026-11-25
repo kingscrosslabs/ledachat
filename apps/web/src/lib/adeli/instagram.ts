@@ -243,6 +243,10 @@ export async function listPostComments(userId: string, accountId: string, postId
 
 /** One of the account's posts by its media id (what automations store as `trigger.mediaId`), or null. */
 export async function findMedia(userId: string, accountId: string, mediaId: string): Promise<AdeliMedia | null> {
-  const posts = await listPosts(userId, accountId);
-  return posts.map(toMedia).find((media) => media.id === mediaId) ?? null;
+  return (await listAllMedia(userId, accountId)).find((media) => media.id === mediaId) ?? null;
+}
+
+/** Every post on one of the user's own Instagram accounts, in one Adeli call. */
+export async function listAllMedia(userId: string, accountId: string): Promise<AdeliMedia[]> {
+  return (await listPosts(userId, accountId)).map(toMedia);
 }
