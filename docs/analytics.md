@@ -39,6 +39,7 @@ Automation events have `automation_id` and `source`: `app` (the UI) or `mcp` (an
 | `leads_exported` | Server | `lead_count` |
 | `audience_viewed` | Server, `/audience` | `people`, plus `automation_id` when filtered to one automation |
 | `audience_exported` | Server, Audience Export CSV | `people`, plus `automation_id` when filtered to one automation |
+| `run_retried` | Server, Retry on a failed person in the Audience (app or MCP) | `ok` (false when Instagram refused again) |
 | `earlier_comments_sent` / `earlier_comments_rejected` | Server, Message earlier comments (app or MCP) | `people` (sent to now), `matched`, `complete`; `reason` (`pro`) on rejection |
 | `agent_setup_opened` | Browser, Connect to AI Agent | `agent` |
 | `api_token_created` / `api_token_revoked` | Server | `read_only`, `expiry` |
